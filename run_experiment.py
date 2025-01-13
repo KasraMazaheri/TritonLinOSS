@@ -11,43 +11,43 @@ Arguments for `run_experiments`:
 - `model_names`: List of model architectures to use.
 - `dataset_names`: List of datasets to train on.
 - `experiment_folder`: Directory containing JSON configuration files.
-- `pytorch_experiments`: Boolean indicating whether to use PyTorch (True) or JAX (False).
-
-The script also provides a command-line interface (CLI) for specifying whether to run PyTorch experiments.
-
-Usage:
-- Use the `--pytorch_experiments` flag to run experiments with PyTorch; otherwise, JAX is used by default.
 """
-
-import argparse
+import sys
 import json
 import diffrax
 from train import create_dataset_model_and_train
 
-def run_experiments(model_names, dataset_names, experiment_folder):
+from data_dir.project_dir import get_linoss_directory
+
+
+def run_experiments(model_names, dataset_names, experiment_folder, task_id=0, use_temp_dir=False):
 
     for model_name in model_names:
         for dataset_name in dataset_names:
-            with open(
-                experiment_folder + f"/{model_name}/{dataset_name}.json", "r"
-            ) as file:
+            config_file = experiment_folder + f"/{model_name}/{dataset_name}.json"
+            with open(config_file, "r") as file:
                 data = json.load(file)
+            print(f"Loading config {config_file}")
 
             seeds = data["seeds"]
-            data_dir = data["data_dir"]
-            output_parent_dir = data["output_parent_dir"]
+            data_dir = str(get_linoss_directory() / data["data_dir"])
+            output_parent_dir = str(get_linoss_directory() / data["output_parent_dir"])
             lr_scheduler = eval(data["lr_scheduler"])
             num_steps = data["num_steps"]
             print_steps = data["print_steps"]
             batch_size = data["batch_size"]
             metric = data["metric"]
-            if model_name == 'LinOSS':
+            if model_name in ["LinOSS_IMEX", "LinOSS_IM", "LinOSS_IMEX_damped"]:
                 linoss_discretization = data["linoss_discretization"]
+                damping = data["damping"]
+                base_model_name = "LinOSS"
             else:
                 linoss_discretization = None
+                damping = False
+                base_model_name = model_name
             use_presplit = data["use_presplit"]
             T = data["T"]
-            if model_name in ["lru", "S5", "S6", "mamba","LinOSS"]:
+            if base_model_name in ["lru", "S5", "S6", "mamba", "LinOSS"]:
                 dt0 = None
             else:
                 dt0 = float(data["dt0"])
@@ -55,16 +55,16 @@ def run_experiments(model_names, dataset_names, experiment_folder):
             lr = float(data["lr"])
             include_time = data["time"].lower() == "true"
             hidden_dim = int(data["hidden_dim"])
-            if model_name in ["log_ncde", "nrde", "ncde"]:
+            if base_model_name in ["log_ncde", "nrde", "ncde"]:
                 vf_depth = int(data["vf_depth"])
                 vf_width = int(data["vf_width"])
-                if model_name in ["log_ncde", "nrde"]:
+                if base_model_name in ["log_ncde", "nrde"]:
                     logsig_depth = int(data["depth"])
                     stepsize = int(float(data["stepsize"]))
                 else:
                     logsig_depth = 1
                     stepsize = 1
-                if model_name == "log_ncde":
+                if base_model_name == "log_ncde":
                     lambd = float(data["lambd"])
                 else:
                     lambd = None
@@ -78,7 +78,7 @@ def run_experiments(model_names, dataset_names, experiment_folder):
                 lambd = None
                 ssm_dim = int(data["ssm_dim"])
                 num_blocks = int(data["num_blocks"])
-            if model_name == "S5" or model_name == "LinOSS":
+            if base_model_name in ["S5", "LinOSS"]:
                 ssm_blocks = int(data["ssm_blocks"])
             else:
                 ssm_blocks = None
@@ -108,10 +108,11 @@ def run_experiments(model_names, dataset_names, experiment_folder):
                 "metric": metric,
                 "include_time": include_time,
                 "T": T,
-                "model_name": model_name,
+                "model_name": base_model_name,
                 "stepsize": stepsize,
                 "logsig_depth": logsig_depth,
                 "linoss_discretization": linoss_discretization,
+                "damping": damping,
                 "model_args": model_args,
                 "num_steps": num_steps,
                 "print_steps": print_steps,
@@ -119,7 +120,7 @@ def run_experiments(model_names, dataset_names, experiment_folder):
                 "lr_scheduler": lr_scheduler,
                 "batch_size": batch_size,
                 "output_parent_dir": output_parent_dir,
-                "id": id,
+                "id": task_id,
             }
             run_fn = create_dataset_model_and_train
 
@@ -129,14 +130,11 @@ def run_experiments(model_names, dataset_names, experiment_folder):
 
 
 if __name__ == "__main__":
-    args = argparse.ArgumentParser()
-    args.add_argument("--dataset_name", type=str, default='EigenWorms')
-    args = args.parse_args()
+    task_id = int(sys.argv[1])
 
-    model_names = ["LinOSS"]
-    dataset_names = [
-        args.dataset_name
-    ]
-    experiment_folder = "experiment_configs/repeats"
+    model_names = ["LinOSS_IMEX_damped"]
+    dataset_names = ["Heartbeat"]
+    linoss_dir = get_linoss_directory()
+    experiment_folder = linoss_dir / "experiment_configs" / "batch" / f"base_config_{task_id:03}"
 
-    run_experiments(model_names, dataset_names, experiment_folder)
+    run_experiments(model_names, dataset_names, str(experiment_folder), task_id=task_id)

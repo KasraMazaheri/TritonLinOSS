@@ -46,6 +46,7 @@ import jax.random as jr
 import optax
 
 from data_dir.datasets import create_dataset
+from data_dir.project_dir import get_linoss_directory
 from models.generate_model import create_model
 
 
@@ -133,10 +134,10 @@ def train_model(
     lr_scheduler,
     batch_size,
     key,
+    results_dir,
     output_dir,
     id,
 ):
-
     if metric == "accuracy":
         best_val = max
         operator_improv = lambda x, y: x >= y
@@ -305,20 +306,10 @@ def train_model(
                 jnp.save(output_dir + "/test_metric.npy", test_metric_save)
 
     print(f"Test metric: {test_metric}")
-    f = open('results/'+str(dataset_name)+'/id_' + str(id) + '.txt', 'a')
+    os.makedirs(results_dir, exist_ok=True)
+    f = open(results_dir + '/id_' + str(id) + '.txt', 'a')
     f.write(str(test_metric * 100.) + '\n')
     f.close()
-
-    steps = jnp.arange(0, num_steps + 1, print_steps)
-    all_train_metric = jnp.array(all_train_metric)
-    all_val_metric = jnp.array(all_val_metric)
-    all_time = jnp.array(all_time)
-    test_metric = jnp.array(test_metric)
-    jnp.save(output_dir + "/steps.npy", steps)
-    jnp.save(output_dir + "/all_train_metric.npy", all_train_metric)
-    jnp.save(output_dir + "/all_val_metric.npy", all_val_metric)
-    jnp.save(output_dir + "/all_time.npy", all_time)
-    jnp.save(output_dir + "/test_metric.npy", test_metric)
 
     return model
 
@@ -336,6 +327,7 @@ def create_dataset_model_and_train(
     stepsize,
     logsig_depth,
     linoss_discretization,
+    damping,
     model_args,
     num_steps,
     print_steps,
@@ -346,24 +338,30 @@ def create_dataset_model_and_train(
     id=None,
 ):
     if model_name == 'LinOSS':
-        model_name_directory = model_name+'_'+linoss_discretization
+        model_directory_name = model_name + '_' + linoss_discretization
+        if damping:
+            model_directory_name += '_damped'
     else:
-        model_name_directory = model_name
-    output_parent_dir += "outputs/" + model_name_directory + "/" + dataset_name
-    output_dir = f"T_{T:.2f}_time_{include_time}_nsteps_{num_steps}_lr_{lr}"
+        model_directory_name = model_name
+
+    output_str = "/outputs/" + model_directory_name + "/" + dataset_name \
+        + f"/T_{T:.2f}_time_{include_time}_nsteps_{num_steps}_lr_{lr}"
     if model_name == "log_ncde" or model_name == "nrde":
-        output_dir += f"_stepsize_{stepsize:.2f}_depth_{logsig_depth}"
+        output_str += f"_stepsize_{stepsize:.2f}_depth_{logsig_depth}"
     for k, v in model_args.items():
         name = str(v)
         if "(" in name:
             name = name.split("(", 1)[0]
         if name == "dt0":
-            output_dir += f"_{k}_" + f"{v:.2f}"
+            output_str += f"_{k}_" + f"{v:.2f}"
         else:
-            output_dir += f"_{k}_" + name
+            output_str += f"_{k}_" + name
         if name == "PIDController":
-            output_dir += f"_rtol_{v.rtol}_atol_{v.atol}"
-    output_dir += f"_seed_{seed}"
+            output_str += f"_rtol_{v.rtol}_atol_{v.atol}"
+    output_str += f"_seed_{seed}"
+    output_dir = output_parent_dir + output_str
+
+    results_dir = output_parent_dir + "/results/" + model_directory_name + "/" + dataset_name
 
     key = jr.PRNGKey(seed)
 
@@ -394,6 +392,7 @@ def create_dataset_model_and_train(
         classification=classification,
         output_step=output_step,
         linoss_discretization=linoss_discretization,
+        damping=damping,
         **model_args,
         key=modelkey,
     )
@@ -426,6 +425,7 @@ def create_dataset_model_and_train(
         lr_scheduler,
         batch_size,
         trainkey,
-        output_parent_dir + "/" + output_dir,
+        results_dir,
+        output_dir,
         id,
     )

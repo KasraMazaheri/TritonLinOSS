@@ -9,9 +9,11 @@ from jax.nn.initializers import normal
 import math
 from jax import random
 
+
 def simple_uniform_init(rng, shape, std=1.):
     weights = random.uniform(rng, shape)*2.*std - std
     return weights
+
 
 class GLU(eqx.Module):
     w1: eqx.nn.Linear
@@ -24,6 +26,7 @@ class GLU(eqx.Module):
 
     def __call__(self, x):
         return self.w1(x) * jax.nn.sigmoid(self.w2(x))
+
 
 # Parallel scan operations
 @jax.vmap
@@ -61,6 +64,7 @@ def binary_operator(q_i, q_j):
     new_b = jnp.concatenate([new_b1, new_b2])
 
     return Anew, new_b + b_j
+
 
 def apply_linoss_im(A_diag, B, C_tilde, input_sequence, step):
     """Compute the LxH output of LinOSS-IM given an LxH input.
@@ -128,42 +132,88 @@ def apply_linoss_imex(A_diag, B, C, input_sequence, step):
 
     return jax.vmap(lambda x: (C @ x).real)(ys)
 
+
+def apply_damped_linoss_imex(A_diag, G_diag, B, C, input_sequence, step):
+    """Compute the LxH output of of Damped LinOSS-IMEX given an LxH input.
+    Args:
+        A_diag  (float32):   diagonal state matrix   (P,)
+        G_diag  (float32):   diagonal damping matrix (P,)
+        B       (complex64): input matrix            (P, H)
+        C       (complex64): output matrix           (H, P)
+        input_sequence (float32): input sequence of features    (L, H)
+        step    (float):     discretization time-step $\Delta_t$  (P,)
+    Returns:
+        outputs (float32): the SSM outputs (Damped LinOSS_IMEX layer preactivations) (L, H)
+    """
+    Bu_elements = jax.vmap(lambda u: B @ u)(input_sequence)
+
+    I = jnp.ones_like(A_diag)
+    S = I + step * G_diag
+    M_11 = 1. / S
+    M_12 = - step / S * A_diag
+    M_21 = step / S
+    M_22 = I - step ** 2 / S * A_diag
+
+    M = jnp.concatenate([M_11, M_12, M_21, M_22])
+    M_elements = M * jnp.ones((input_sequence.shape[0], 4 * A_diag.shape[0]))
+    
+    F1 = step * (1. / S) * Bu_elements
+    F2 = step ** 2 * (1. / S) * Bu_elements
+    F = jnp.hstack((F1, F2))
+
+    _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
+    ys = xs[:, A_diag.shape[0]:]
+
+    return jax.vmap(lambda x: (C @ x).real)(ys)
+
+
 class LinOSSLayer(eqx.Module):
     A_diag: jax.Array
+    G_diag: jax.Array
     B: jax.Array
     C: jax.Array
     D: jax.Array
     steps: jax.Array
     discretization: str
+    damping: bool
 
     def __init__(
         self,
         ssm_size,
         H,
         discretization,
+        damping,
         *,
         key
     ):
-
-        B_key, C_key, D_key, A_key, step_key, key = jr.split(key, 6)
+        A_key, G_key, B_key, C_key, D_key, step_key, key = jr.split(key, 7)
         self.A_diag = random.uniform(A_key, shape=(ssm_size,))
+        self.G_diag = random.uniform(G_key, shape=(ssm_size,))
         self.B = simple_uniform_init(B_key,shape=(ssm_size, H, 2),std=1./math.sqrt(H))
         self.C = simple_uniform_init(C_key,shape=(H, ssm_size, 2),std=1./math.sqrt(ssm_size))
         self.D = normal(stddev=1.0)(D_key, (H,))
         self.steps = random.uniform(step_key,shape=(ssm_size,))
         self.discretization = discretization
+        self.damping = damping
 
     def __call__(self, input_sequence):
         A_diag = nn.relu(self.A_diag)
+        G_diag_tilde = nn.relu(self.steps / 2 * A_diag - 2 / self.steps) + nn.relu(self.G_diag)
 
         B_complex = self.B[..., 0] + 1j * self.B[..., 1]
         C_complex = self.C[..., 0] + 1j * self.C[..., 1]
 
         steps = nn.sigmoid(self.steps)
         if self.discretization == 'IMEX':
-            ys = apply_linoss_imex(A_diag, B_complex, C_complex, input_sequence, steps)
+            if self.damping:
+                ys = apply_damped_linoss_imex(A_diag, G_diag_tilde, B_complex, C_complex, input_sequence, steps)
+            else:
+                ys = apply_linoss_imex(A_diag, B_complex, C_complex, input_sequence, steps)
         elif self.discretization == 'IM':
-            ys = apply_linoss_im(A_diag, B_complex, C_complex, input_sequence, steps)
+            if self.damping:
+                print('Discretization type not implemented')
+            else:
+                ys = apply_linoss_im(A_diag, B_complex, C_complex, input_sequence, steps)
         else:
             print('Discretization type not implemented')
 
@@ -172,7 +222,6 @@ class LinOSSLayer(eqx.Module):
 
 
 class LinOSSBlock(eqx.Module):
-
     norm: eqx.nn.BatchNorm
     ssm: LinOSSLayer
     glu: GLU
@@ -183,6 +232,7 @@ class LinOSSBlock(eqx.Module):
         ssm_size,
         H,
         discretization,
+        damping,
         drop_rate=0.05,
         *,
         key
@@ -195,6 +245,7 @@ class LinOSSBlock(eqx.Module):
             ssm_size,
             H,
             discretization,
+            damping,
             key=ssmkey,
         )
         self.glu = GLU(H, H, key=glukey)
@@ -234,6 +285,7 @@ class LinOSS(eqx.Module):
         classification,
         output_step,
         discretization,
+        damping,
         *,
         key
     ):
@@ -247,6 +299,7 @@ class LinOSS(eqx.Module):
                 ssm_size,
                 H,
                 discretization,
+                damping,
                 key=key,
             )
             for key in block_keys
