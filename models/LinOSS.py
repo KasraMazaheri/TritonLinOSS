@@ -1,3 +1,4 @@
+import os
 from typing import List
 
 import equinox as eqx
@@ -64,6 +65,30 @@ def binary_operator(q_i, q_j):
     new_b = jnp.concatenate([new_b1, new_b2])
 
     return Anew, new_b + b_j
+
+
+def make_damped_linoss_imex_recurrence(A_diag, G_diag, step):
+    """Compute the PxP recurrent matrix M_IMEX for Damped LinOSS-IMEX
+    Args:
+        A_diag  (float32):   diagonal state matrix   (P,)
+        G_diag  (float32):   diagonal damping matrix   (P,)
+        step    (float):     discretization time-step $\Delta_t$  (P,)
+    Returns:
+        M_IMEX    (float32): the recurrent matrix (P, P)
+    """
+    I = jnp.ones_like(A_diag)
+    S = I + step * G_diag
+    M_IMEX_11 = jnp.diag(1. / S)
+    M_IMEX_12 = jnp.diag(- step / S * A_diag)
+    M_IMEX_21 = jnp.diag(step / S)
+    M_IMEX_22 = jnp.diag(I - step ** 2 / S * A_diag)
+
+    M_IMEX = jnp.block([
+        [M_IMEX_11, M_IMEX_12],
+        [M_IMEX_21, M_IMEX_22]
+    ])
+
+    return M_IMEX
 
 
 def apply_linoss_im(A_diag, B, C_tilde, input_sequence, step):
@@ -321,3 +346,40 @@ class LinOSS(eqx.Module):
             x = x[self.output_step - 1 :: self.output_step]
             x = jax.nn.tanh(jax.vmap(self.linear_layer)(x))
         return x, state
+    
+    def save_params(self, save_dir):
+        """Saves parameters as directory tree"""
+        os.makedirs(save_dir + 'input/', exist_ok=True)
+        os.makedirs(save_dir + 'output/', exist_ok=True)
+        jnp.save(save_dir + 'input/weight.npy', self.linear_encoder.weight)
+        jnp.save(save_dir + 'input/bias.npy', self.linear_encoder.bias)
+        jnp.save(save_dir + 'output/weight.npy', self.linear_layer.weight)
+        jnp.save(save_dir + 'output/bias.npy', self.linear_layer.bias)
+
+        for i, block in enumerate(self.blocks):
+            os.makedirs(save_dir + f'block_{i}/glu/w1/', exist_ok=True)
+            os.makedirs(save_dir + f'block_{i}/glu/w2/', exist_ok=True)
+            jnp.save(save_dir + f'block_{i}/glu/w1/weight.npy', block.glu.w1.weight)
+            jnp.save(save_dir + f'block_{i}/glu/w1/bias.npy', block.glu.w1.bias)
+            jnp.save(save_dir + f'block_{i}/glu/w2/weight.npy', block.glu.w2.weight)
+            jnp.save(save_dir + f'block_{i}/glu/w2/bias.npy', block.glu.w2.bias)
+
+            A_diag = nn.relu(block.ssm.A_diag)
+            G_diag = nn.relu(block.ssm.steps / 2 * A_diag - 2 / block.ssm.steps) + nn.relu(block.ssm.G_diag)
+            B_complex = block.ssm.B[..., 0] + 1j * block.ssm.B[..., 1]
+            C_complex = block.ssm.C[..., 0] + 1j * block.ssm.C[..., 1]
+            D = jnp.diag(block.ssm.D)
+            steps = nn.sigmoid(block.ssm.steps)
+
+            if self.discretization == 'IMEX' and self.damping:
+                M = make_damped_linoss_imex_recurrence(A_diag, G_diag, steps)
+            else:
+                raise NotImplementedError(
+                    "Discretization {}, damping = {} not implemented".format(self.discretization, self.damping)
+                )
+
+            jnp.save(save_dir + f'block_{i}/A.npy', M)
+            jnp.save(save_dir + f'block_{i}/B.npy', B_complex)
+            jnp.save(save_dir + f'block_{i}/C.npy', C_complex)
+            jnp.save(save_dir + f'block_{i}/D.npy', D)
+            jnp.save(save_dir + f'block_{i}/steps.npy', steps)
