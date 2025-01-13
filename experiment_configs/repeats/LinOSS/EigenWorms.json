@@ -19,12 +19,13 @@
     "use_presplit": false,
     "T": 1,
     "dt0": null,
-    "linoss_discretization": "IM",
+    "linoss_discretization": "IMEX",
+    "damping": true,
     "scale": 0,
-    "time": "True",
+    "time": "False",
     "lr": "0.001",
     "num_blocks": "2",
-    "hidden_dim": "128",
-    "ssm_dim": "64",
+    "hidden_dim": "64",
+    "ssm_dim": "16",
     "ssm_blocks": "2"
 }
