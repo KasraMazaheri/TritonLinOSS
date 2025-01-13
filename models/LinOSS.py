@@ -67,28 +67,71 @@ def binary_operator(q_i, q_j):
     return Anew, new_b + b_j
 
 
+def make_linoss_im_recurrence(A_diag, step):
+    """Compute the PxP recurrent matrix M for LinOSS-IM
+    Args:
+        A_diag  (float32):   diagonal state matrix   (P,)
+        step    (float):     discretization time-step $\Delta_t$  (P,)
+    Returns:
+        M    (float32): the recurrent matrix (P, P)
+    """
+    S = 1. / (1. + step ** 2. * A_diag)
+    M_11 = jnp.diag(1. - step ** 2. * A_diag * S)
+    M_12 = jnp.diag(-1. * step * A_diag * S)
+    M_21 = jnp.diag(step * S)
+    M_22 = jnp.diag(S)
+
+    M = jnp.block([
+        [M_11, M_12],
+        [M_21, M_22]
+    ])
+
+    return M
+
+
+def make_linoss_imex_recurrence(A_diag, step):
+    """Compute the PxP recurrent matrix M for LinOSS-IMEX
+    Args:
+        A_diag  (float32):   diagonal state matrix   (P,)
+        step    (float):     discretization time-step $\Delta_t$  (P,)
+    Returns:
+        M  (float32): the recurrent matrix (P, P)
+    """
+    M_11 = jnp.diag(jnp.ones_like(A_diag))
+    M_12 = jnp.diag(-1. * step * A_diag)
+    M_21 = jnp.diag(step)
+    M_22 = jnp.diag(1. - (step ** 2.) * A_diag)
+
+    M = jnp.block([
+        [M_11, M_12],
+        [M_21, M_22]
+    ])
+
+    return M
+
+
 def make_damped_linoss_imex_recurrence(A_diag, G_diag, step):
-    """Compute the PxP recurrent matrix M_IMEX for Damped LinOSS-IMEX
+    """Compute the PxP recurrent matrix M for Damped LinOSS-IMEX
     Args:
         A_diag  (float32):   diagonal state matrix   (P,)
         G_diag  (float32):   diagonal damping matrix   (P,)
         step    (float):     discretization time-step $\Delta_t$  (P,)
     Returns:
-        M_IMEX    (float32): the recurrent matrix (P, P)
+        M    (float32): the recurrent matrix (P, P)
     """
     I = jnp.ones_like(A_diag)
     S = I + step * G_diag
-    M_IMEX_11 = jnp.diag(1. / S)
-    M_IMEX_12 = jnp.diag(- step / S * A_diag)
-    M_IMEX_21 = jnp.diag(step / S)
-    M_IMEX_22 = jnp.diag(I - step ** 2 / S * A_diag)
+    M_11 = jnp.diag(1. / S)
+    M_12 = jnp.diag(- step / S * A_diag)
+    M_21 = jnp.diag(step / S)
+    M_22 = jnp.diag(I - step ** 2 / S * A_diag)
 
-    M_IMEX = jnp.block([
-        [M_IMEX_11, M_IMEX_12],
-        [M_IMEX_21, M_IMEX_22]
+    M = jnp.block([
+        [M_11, M_12],
+        [M_21, M_22]
     ])
 
-    return M_IMEX
+    return M
 
 
 def apply_linoss_im(A_diag, B, C_tilde, input_sequence, step):
@@ -100,26 +143,25 @@ def apply_linoss_im(A_diag, B, C_tilde, input_sequence, step):
         input_sequence (float32): input sequence of features    (L, H)
         step    (float):     discretization time-step $\Delta_t$  (P,)
     Returns:
-        outputs (float32): the SSM outputs (LinOSS_IMEX layer preactivations)      (L, H)
+        outputs (float32): the SSM outputs (LinOSS_IM layer preactivations)      (L, H)
     """
     Bu_elements = jax.vmap(lambda u: B @ u)(input_sequence)
 
     schur_comp = 1. / (1. + step ** 2. * A_diag)
-    M_IM_11 = 1. - step ** 2. * A_diag * schur_comp
-    M_IM_12 = -1. * step * A_diag * schur_comp
-    M_IM_21 = step * schur_comp
-    M_IM_22 = schur_comp
+    M_11 = 1. - step ** 2. * A_diag * schur_comp
+    M_12 = -1. * step * A_diag * schur_comp
+    M_21 = step * schur_comp
+    M_22 = schur_comp
 
-    M_IM = jnp.concatenate([M_IM_11, M_IM_12, M_IM_21, M_IM_22])
+    M = jnp.concatenate([M_11, M_12, M_21, M_22])
 
-    M_IM_elements = M_IM * jnp.ones((input_sequence.shape[0],
-                                         4 * A_diag.shape[0]))
+    M_elements = M * jnp.ones((input_sequence.shape[0], 4 * A_diag.shape[0]))
 
-    F1 = M_IM_11 * Bu_elements * step
-    F2 = M_IM_21 * Bu_elements * step
+    F1 = M_11 * Bu_elements * step
+    F2 = M_21 * Bu_elements * step
     F = jnp.hstack((F1, F2))
 
-    _, xs = jax.lax.associative_scan(binary_operator, (M_IM_elements, F))
+    _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
     ys = xs[:, A_diag.shape[0]:]
 
     return jax.vmap(lambda x: (C_tilde @ x).real)(ys)
@@ -143,16 +185,15 @@ def apply_linoss_imex(A_diag, B, C, input_sequence, step):
     C_ = step
     D_ = 1. - (step ** 2.) * A_diag
 
-    M_IMEX = jnp.concatenate([A_, B_, C_, D_])
+    M = jnp.concatenate([A_, B_, C_, D_])
 
-    M_IMEX_elements = M_IMEX * jnp.ones((input_sequence.shape[0],
-                                          4 * A_diag.shape[0]))
+    M_elements = M * jnp.ones((input_sequence.shape[0], 4 * A_diag.shape[0]))
 
     F1 = Bu_elements * step
     F2 = Bu_elements * (step ** 2.)
     F = jnp.hstack((F1, F2))
 
-    _, xs = jax.lax.associative_scan(binary_operator, (M_IMEX_elements, F))
+    _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
     ys = xs[:, A_diag.shape[0]:]
 
     return jax.vmap(lambda x: (C @ x).real)(ys)
@@ -371,14 +412,18 @@ class LinOSS(eqx.Module):
             D = jnp.diag(block.ssm.D)
             steps = nn.sigmoid(block.ssm.steps)
 
-            if self.discretization == 'IMEX' and self.damping:
+            if self.discretization == 'IM' and not self.damping:
+                M = make_linoss_im_recurrence(A_diag, steps)
+            elif self.discretization == 'IMEX' and not self.damping:
+                M = make_linoss_imex_recurrence(A_diag, steps)
+            elif self.discretization == 'IMEX' and self.damping:
                 M = make_damped_linoss_imex_recurrence(A_diag, G_diag, steps)
             else:
                 raise NotImplementedError(
                     "Discretization {}, damping = {} not implemented".format(self.discretization, self.damping)
                 )
 
-            jnp.save(save_dir + f'block_{i}/A.npy', M)
+            jnp.save(save_dir + f'block_{i}/M.npy', M)
             jnp.save(save_dir + f'block_{i}/B.npy', B_complex)
             jnp.save(save_dir + f'block_{i}/C.npy', C_complex)
             jnp.save(save_dir + f'block_{i}/D.npy', D)

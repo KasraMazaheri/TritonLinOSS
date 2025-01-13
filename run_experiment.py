@@ -20,7 +20,7 @@ from train import create_dataset_model_and_train
 from data_dir.project_dir import get_linoss_directory
 
 
-def run_experiments(model_names, dataset_names, experiment_folder, task_id=0, use_temp_dir=False):
+def run_experiments(model_names, dataset_names, experiment_folder, task_id=0, save_params=False):
 
     for model_name in model_names:
         for dataset_name in dataset_names:
@@ -37,17 +37,15 @@ def run_experiments(model_names, dataset_names, experiment_folder, task_id=0, us
             print_steps = data["print_steps"]
             batch_size = data["batch_size"]
             metric = data["metric"]
-            if model_name in ["LinOSS_IMEX", "LinOSS_IM", "LinOSS_IMEX_damped"]:
+            if model_name == "LinOSS":
                 linoss_discretization = data["linoss_discretization"]
                 damping = data["damping"]
-                base_model_name = "LinOSS"
             else:
                 linoss_discretization = None
                 damping = False
-                base_model_name = model_name
             use_presplit = data["use_presplit"]
             T = data["T"]
-            if base_model_name in ["lru", "S5", "S6", "mamba", "LinOSS"]:
+            if model_name in ["lru", "S5", "S6", "mamba", "LinOSS"]:
                 dt0 = None
             else:
                 dt0 = float(data["dt0"])
@@ -55,16 +53,16 @@ def run_experiments(model_names, dataset_names, experiment_folder, task_id=0, us
             lr = float(data["lr"])
             include_time = data["time"].lower() == "true"
             hidden_dim = int(data["hidden_dim"])
-            if base_model_name in ["log_ncde", "nrde", "ncde"]:
+            if model_name in ["log_ncde", "nrde", "ncde"]:
                 vf_depth = int(data["vf_depth"])
                 vf_width = int(data["vf_width"])
-                if base_model_name in ["log_ncde", "nrde"]:
+                if model_name in ["log_ncde", "nrde"]:
                     logsig_depth = int(data["depth"])
                     stepsize = int(float(data["stepsize"]))
                 else:
                     logsig_depth = 1
                     stepsize = 1
-                if base_model_name == "log_ncde":
+                if model_name == "log_ncde":
                     lambd = float(data["lambd"])
                 else:
                     lambd = None
@@ -78,7 +76,7 @@ def run_experiments(model_names, dataset_names, experiment_folder, task_id=0, us
                 lambd = None
                 ssm_dim = int(data["ssm_dim"])
                 num_blocks = int(data["num_blocks"])
-            if base_model_name in ["S5", "LinOSS"]:
+            if model_name in ["S5", "LinOSS"]:
                 ssm_blocks = int(data["ssm_blocks"])
             else:
                 ssm_blocks = None
@@ -108,7 +106,7 @@ def run_experiments(model_names, dataset_names, experiment_folder, task_id=0, us
                 "metric": metric,
                 "include_time": include_time,
                 "T": T,
-                "model_name": base_model_name,
+                "model_name": model_name,
                 "stepsize": stepsize,
                 "logsig_depth": logsig_depth,
                 "linoss_discretization": linoss_discretization,
@@ -121,6 +119,7 @@ def run_experiments(model_names, dataset_names, experiment_folder, task_id=0, us
                 "batch_size": batch_size,
                 "output_parent_dir": output_parent_dir,
                 "id": task_id,
+                "save_params": save_params,
             }
             run_fn = create_dataset_model_and_train
 
@@ -132,9 +131,10 @@ def run_experiments(model_names, dataset_names, experiment_folder, task_id=0, us
 if __name__ == "__main__":
     task_id = int(sys.argv[1])
 
-    model_names = ["LinOSS_IMEX_damped"]
+    model_names = ["LinOSS"]
     dataset_names = ["Heartbeat"]
     linoss_dir = get_linoss_directory()
-    experiment_folder = linoss_dir / "experiment_configs" / "batch" / f"base_config_{task_id:03}"
+    # experiment_folder = linoss_dir / "experiment_configs" / "batch" / f"base_config_{task_id:03}"
+    experiment_folder = linoss_dir / "experiment_configs" / "repeats" / "LinOSS"
 
-    run_experiments(model_names, dataset_names, str(experiment_folder), task_id=task_id)
+    run_experiments(model_names, dataset_names, str(experiment_folder), task_id=task_id, save_params=True)
