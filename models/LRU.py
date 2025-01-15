@@ -80,7 +80,7 @@ class LRULayer(eqx.Module):
         diag_lambda = jnp.exp(-jnp.exp(self.nu_log) + 1j * jnp.exp(self.theta_log))
         self.gamma_log = jnp.log(jnp.sqrt(1 - jnp.abs(diag_lambda) ** 2))
 
-    def __call__(self, x):
+    def __call__(self, x, save_dir=None):
         # Materializing the diagonal of Lambda and projections
         Lambda = jnp.exp(-jnp.exp(self.nu_log) + 1j * jnp.exp(self.theta_log))
         B_norm = (self.B_re + 1j * self.B_im) * jnp.expand_dims(
@@ -95,6 +95,11 @@ class LRULayer(eqx.Module):
             binary_operator_diag, elements
         )  # all x_k
         y = jax.vmap(lambda z, u: (C @ z).real + (self.D * u))(inner_states, x)
+
+        # Save weights, SSM states, SSM outputs
+        if save_dir is not None:
+            jnp.save(block_dir + 'ssm_states.npy', inner_states)
+            jnp.save(block_dir + 'ssm_outputs.npy', y)
 
         return y
 
@@ -115,16 +120,22 @@ class LRUBlock(eqx.Module):
         self.glu = GLU(H, H, key=glukey)
         self.drop = eqx.nn.Dropout(p=drop_rate)
 
-    def __call__(self, x, state, *, key):
+    def __call__(self, x, state, *, key, save_dir=None):
         dropkey1, dropkey2 = jr.split(key, 2)
         skip = x
         x, state = self.norm(x.T, state)
         x = x.T
-        x = self.lru(x)
+        x = self.lru(x, save_dir=save_dir)
         x = self.drop(jax.nn.gelu(x), key=dropkey1)
         x = jax.vmap(self.glu)(x)
         x = self.drop(x, key=dropkey2)
         x = skip + x
+
+        # Save activations
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+            jnp.save(save_dir + 'activations.npy', x)
+
         return x, state
 
 
@@ -166,15 +177,30 @@ class LRU(eqx.Module):
         self.classification = classification
         self.output_step = output_step
 
-    def __call__(self, x, state, key):
+    def __call__(self, x, state, key, save_dir=None):
         dropkeys = jr.split(key, len(self.blocks))
         x = jax.vmap(self.linear_encoder)(x)
-        for block, key in zip(self.blocks, dropkeys):
-            x, state = block(x, state, key=key)
+        
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+            jnp.save(save_state_dir + 'input.npy', x)
+
+        for i, (block, key) in enumerate(zip(self.blocks, dropkeys)):
+            if save_dir is not None:
+                block_dir = save_dir + f'block_{i}/'
+                x, state = block(x, state, key=key, save_dir=block_dir)
+            else:
+                x, state = block(x, state, key=key, save_dir=None)
+
         if self.classification:
             x = jnp.mean(x, axis=0)
+            if save_dir is not None:
+                jnp.save(save_dir + 'output.npy', self.linear_layer(x)) 
             x = jax.nn.softmax(self.linear_layer(x), axis=0)
         else:
             x = x[self.output_step - 1 :: self.output_step]
+            if save_dir is not None:
+                jnp.save(save_dir + 'output.npy', jax.vmap(self.linear_layer)(x)) 
             x = jax.nn.tanh(jax.vmap(self.linear_layer)(x))
+
         return x, state

@@ -78,7 +78,7 @@ def batch_calc_coeffs(data, include_time, T, inmemory=True):
     remainder = N % batchsize
     coeffs = []
     if inmemory:
-        out_func = lambda x: x
+        out_func = lambda x: x[0] # Wrapped in tuple
         in_func = lambda x: x
     else:
         out_func = lambda x: np.array(x)
@@ -147,9 +147,9 @@ def dataset_generator(
     intervals = jnp.concatenate((intervals, jnp.array([train_data.shape[1]])))
     intervals = intervals * (T / train_data.shape[1])
 
-    train_coeffs = calc_coeffs(train_data, include_time, T)
-    val_coeffs = calc_coeffs(val_data, include_time, T)
-    test_coeffs = calc_coeffs(test_data, include_time, T)
+    train_coeffs = batch_calc_coeffs(train_data, include_time, T)
+    val_coeffs = batch_calc_coeffs(val_data, include_time, T)
+    test_coeffs = batch_calc_coeffs(test_data, include_time, T)
     train_coeff_data = (
         (T / train_data.shape[1])
         * jnp.repeat(

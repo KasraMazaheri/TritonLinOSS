@@ -245,16 +245,14 @@ def binary_operator(q_i, q_j):
     return A_j * A_i, A_j * b_i + b_j
 
 
-def apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, conj_sym):
-    """Compute the LxH output of discretized SSM given an LxH input.
+def apply_ssm(Lambda_bar, B_bar, input_sequence):
+    """Compute the LxP state sequence of discretized SSM given an LxH input.
     Args:
         Lambda_bar (complex64): discretized diagonal state matrix    (P,)
         B_bar      (complex64): discretized input matrix             (P, H)
-        C_tilde    (complex64): output matrix                        (H, P)
         input_sequence (float32): input sequence of features         (L, H)
-        conj_sym (bool):         whether conjugate symmetry is enforced
     Returns:
-        ys (float32): the SSM outputs (S5 layer preactivations)      (L, H)
+        xs (float32): the SSM states                                 (L, P)
     """
     Lambda_elements = Lambda_bar * jnp.ones(
         (input_sequence.shape[0], Lambda_bar.shape[0])
@@ -263,10 +261,7 @@ def apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, conj_sym):
 
     _, xs = jax.lax.associative_scan(binary_operator, (Lambda_elements, Bu_elements))
 
-    if conj_sym:
-        return jax.vmap(lambda x: 2 * (C_tilde @ x).real)(xs)
-    else:
-        return jax.vmap(lambda x: (C_tilde @ x).real)(xs)
+    return xs
 
 
 class S5Layer(eqx.Module):
@@ -361,7 +356,7 @@ class S5Layer(eqx.Module):
         self.step_rescale = step_rescale
         self.discretisation = discretisation
 
-    def __call__(self, input_sequence):
+    def __call__(self, input_sequence, save_dir=None):
         if self.clip_eigs:
             Lambda = jnp.clip(self.Lambda_re, None, -1e-4) + 1j * self.Lambda_im
         else:
@@ -382,11 +377,19 @@ class S5Layer(eqx.Module):
                 "Discretization method {} not implemented".format(self.discretisation)
             )
 
-        ys = apply_ssm(Lambda_bar, B_bar, C_tilde, input_sequence, self.conj_sym)
-
-        # Add feedthrough matrix output Du;
+        ys = apply_ssm(Lambda_bar, B_bar, input_sequence)
+        if self.conj_sym:
+            Cy = jax.vmap(lambda x: 2 * (C_tilde @ x).real)(ys)
+        else:
+            Cy = jax.vmap(lambda x: (C_tilde @ x).real)(ys)
         Du = jax.vmap(lambda u: self.D * u)(input_sequence)
-        return ys + Du
+        xs = Cy + Du
+
+        if save_dir is not None:
+            jnp.save(save_dir + 'ssm_states.npy', ys)
+            jnp.save(save_dir + 'ssm_outputs.npy', xs)
+
+        return xs
 
 
 class S5Block(eqx.Module):
@@ -432,17 +435,23 @@ class S5Block(eqx.Module):
         self.glu = GLU(H, H, key=glukey)
         self.drop = eqx.nn.Dropout(p=drop_rate)
 
-    def __call__(self, x, state, *, key):
+    def __call__(self, x, state, *, key, save_dir=None):
         """Compute S5 block."""
         dropkey1, dropkey2 = jr.split(key, 2)
         skip = x
         x, state = self.norm(x.T, state)
         x = x.T
-        x = self.ssm(x)
+        x = self.ssm(x, save_dir=save_dir)
         x = self.drop(jax.nn.gelu(x), key=dropkey1)
         x = jax.vmap(self.glu)(x)
         x = self.drop(x, key=dropkey2)
         x = skip + x
+
+        # Save activations
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+            jnp.save(save_dir + 'activations.npy', x)
+
         return x, state
 
 
@@ -501,16 +510,31 @@ class S5(eqx.Module):
         self.classification = classification
         self.output_step = output_step
 
-    def __call__(self, x, state, key):
+    def __call__(self, x, state, key, save_dir=None):
         """Compute S5."""
         dropkeys = jr.split(key, len(self.blocks))
         x = jax.vmap(self.linear_encoder)(x)
-        for block, key in zip(self.blocks, dropkeys):
-            x, state = block(x, state, key=key)
+        
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+            jnp.save(save_state_dir + 'input.npy', x)
+
+        for i, (block, key) in enumerate(zip(self.blocks, dropkeys)):
+            if save_dir is not None:
+                block_dir = save_dir + f'block_{i}/'
+                x, state = block(x, state, key=key, save_dir=block_dir)
+            else:
+                x, state = block(x, state, key=key, save_dir=None)
+
         if self.classification:
             x = jnp.mean(x, axis=0)
+            if save_dir is not None:
+                jnp.save(save_dir + 'output.npy', self.linear_layer(x)) 
             x = jax.nn.softmax(self.linear_layer(x), axis=0)
         else:
             x = x[self.output_step - 1 :: self.output_step]
+            if save_dir is not None:
+                jnp.save(save_dir + 'output.npy', jax.vmap(self.linear_layer)(x)) 
             x = jax.nn.tanh(jax.vmap(self.linear_layer)(x))
+
         return x, state

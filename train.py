@@ -328,6 +328,7 @@ def create_dataset_model_and_train(
     logsig_depth,
     linoss_discretization,
     damping,
+    parameterization,
     model_args,
     num_steps,
     print_steps,
@@ -394,6 +395,7 @@ def create_dataset_model_and_train(
         output_step=output_step,
         linoss_discretization=linoss_discretization,
         damping=damping,
+        parameterization=parameterization,
         **model_args,
         key=modelkey,
     )

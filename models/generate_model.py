@@ -73,6 +73,7 @@ def create_model(
     lambd=0.0,
     linoss_discretization='IM',
     damping=False,
+    parameterization="stable",
     *,
     key,
 ):
@@ -205,6 +206,7 @@ def create_model(
             output_step,
             linoss_discretization,
             damping,
+            parameterization,
             key=key,
         )
         state = eqx.nn.State(ssm)
