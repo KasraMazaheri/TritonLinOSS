@@ -28,6 +28,12 @@ from data_dir.generate_coeffs import calc_coeffs
 from data_dir.generate_paths import calc_paths
 
 
+def get_subfolders(folder):
+    if os.path.exists(folder):
+        return [f.name for f in os.scandir(folder) if f.is_dir()]
+    return []
+
+
 @dataclass
 class Dataset:
     name: str
@@ -399,12 +405,8 @@ def create_dataset(
     *,
     key,
 ):
-    uea_subfolders = [
-        f.name for f in os.scandir(data_dir + "/processed/UEA") if f.is_dir()
-    ]
-    toy_subfolders = [
-        f.name for f in os.scandir(data_dir + "/processed/toy") if f.is_dir()
-    ]
+    uea_subfolders = get_subfolders(data_dir + "/processed/UEA")
+    toy_subfolders = get_subfolders(data_dir + "/processed/toy")
 
     if name in uea_subfolders:
         return create_uea_dataset(
