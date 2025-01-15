@@ -10,11 +10,27 @@ def create_configs(
     out_dir,
     model_name,
     dataset_name,
-    params={},
+    learning_rates,
+    hidden_dims,
+    state_dims,
+    blocks,
+    time,
+    discretization,
+    damping,
+    parameterization,
 ):
-    labels = params.keys()
-    combos = itertools.product(params.values())
-    for i, combo in enumerate(combos):
+    combos = itertools.product(
+        learning_rates, 
+        hidden_dims, 
+        state_dims, 
+        blocks, 
+        time, 
+        discretization, 
+        damping, 
+        parameterization
+    )
+
+    for i, (lr, hd, sd, nb, t, dis, dam, par) in enumerate(combos):
         # I/O
         in_filename = in_dir / model / (dataset + ".json")
         os.makedirs(out_dir / model / dataset , exist_ok=True)
@@ -26,8 +42,14 @@ def create_configs(
 
         data["dataset_name"] = dataset_name
         data["model_name"] = model_name
-        sample_data = {labels[i]: combo[i] for i in range(len(combo))}
-        data = data | sample_data
+        data["lr"] = float(lr)
+        data["hidden_dim"] = int(hd)
+        data["ssm_dim"] = int(sd)
+        data["num_blocks"] = int(nb)
+        data["time"] = str(t)
+        data["discretization"] = str(dis)
+        data["damping"] = bool(dam)
+        data["parameterization"] = str(par)
 
         with open(out_filename, "w") as out_file:
             json.dump(data, out_file, indent=4)
@@ -61,14 +83,12 @@ if __name__ == "__main__":
                 out_dir,
                 model,
                 dataset,
-                params={
-                    "lr": learning_rates,
-                    "hidden_dim": hidden_dims, 
-                    "ssm_dim": state_dims, 
-                    "num_blocks": blocks, 
-                    "time": time, 
-                    "linoss_discretization": discretization, 
-                    "damping": damping,
-                    "parameterization": parameterization,
-                },
+                learning_rates,
+                hidden_dims,
+                state_dims,
+                blocks,
+                time,
+                discretization,
+                damping,
+                parameterization,
             )

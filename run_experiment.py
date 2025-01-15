@@ -136,7 +136,7 @@ def run_experiments(
                     "lr_scheduler": lr_scheduler,
                     "batch_size": batch_size,
                     "output_parent_dir": output_parent_dir,
-                    "id": task_id,
+                    "id": idx,
                 }
                 run_fn = create_dataset_model_and_train
 
