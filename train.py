@@ -337,7 +337,6 @@ def create_dataset_model_and_train(
     batch_size,
     output_parent_dir="",
     id=None,
-    save_params=False,
 ):
     if model_name == 'LinOSS':
         model_directory_name = model_name + '_' + linoss_discretization
@@ -432,11 +431,5 @@ def create_dataset_model_and_train(
         output_dir,
         id,
     )
-
-    if save_params:
-        if model_name == 'LinOSS':
-            model.save_params(output_dir)
-        else:
-            print(f"Parameter saving for model {model_name} has not been imlpemented")
 
     return model

@@ -47,7 +47,7 @@ def create_configs(
         data["ssm_dim"] = int(sd)
         data["num_blocks"] = int(nb)
         data["time"] = str(t)
-        data["discretization"] = str(dis)
+        data["linoss_discretization"] = str(dis)
         data["damping"] = bool(dam)
         data["parameterization"] = str(par)
 
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     # Enumerate hyperparameter grid
     learning_rates = [1e-5, 1e-2]
     hidden_dims = [16, 64, 128]
-    state_dims = [16, 64, 128, 256]
+    state_dims = [16, 64, 256]
     blocks = [2, 4, 6]
     time = [False, True]
     discretization = ["IMEX"]

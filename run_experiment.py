@@ -8,7 +8,7 @@ files from a specified folder, and then calls the appropriate training function 
 framework (PyTorch or JAX).
 
 Arguments for `run_experiments`:
-- `task_id`: For batching, choose 1 if manual
+- `task_id`: For batching, choose 0 if manual
 - `num_tasks`: For batching, choose 1 if manual
 - `model_names`: List of model architectures to use.
 - `dataset_names`: List of datasets to train on.
@@ -27,7 +27,7 @@ def run_experiments(
     model_names, 
     dataset_names, 
     experiment_folder, 
-    task_id=1,
+    task_id=0,
     num_tasks=1, 
     save_model=False
 ):
@@ -36,7 +36,7 @@ def run_experiments(
             # Batching
             config_folder = experiment_folder + f"/{model_name}/{dataset_name}/"
             num_configs = len(glob.glob(config_folder + "config_*"))
-            idxs = range(num_configs)[(task_id-1):num_configs:num_tasks]
+            idxs = range(num_configs)[task_id:num_configs:num_tasks]
             
             for idx in idxs:
                 config_file = config_folder + f"config_{idx:03}.json"
@@ -159,7 +159,7 @@ if __name__ == "__main__":
 
     model_names = ["LinOSS"]
     dataset_names = ["ppg"]
-    experiment_folder = get_linoss_directory() / "experiment_configs" / "grid"
+    experiment_folder = get_linoss_directory() / "experiment_configs" / "random"
 
     run_experiments(
         model_names, 
