@@ -12,12 +12,12 @@ Attributes of the S5 model:
 
 The module also includes:
 - `S5Layer`: Implements the core S5 layer using structured state space models with options for
-  different discretisation methods and eigenvalue clipping.
+  different discretization methods and eigenvalue clipping.
 - `S5Block`: Combines the S5 layer with batch normalisation, a GLU activation, and dropout.
 - Utility functions for initialising and discretising the state space model components,
   such as `make_HiPPO`, `make_NPLR_HiPPO`, and `make_DPLR_HiPPO`.
 """
-
+import os
 from typing import List
 
 import equinox as eqx
@@ -202,7 +202,7 @@ def discretize_bilinear(Lambda, B_tilde, Delta):
     Args:
         Lambda (complex64): diagonal state matrix              (P,)
         B_tilde (complex64): input matrix                      (P, H)
-        Delta (float32): discretisation step sizes             (P,)
+        Delta (float32): discretization step sizes             (P,)
     Returns:
         discretized Lambda_bar (complex64), B_bar (complex64)  (P,), (P,H)
     """
@@ -220,7 +220,7 @@ def discretize_zoh(Lambda, B_tilde, Delta):
     Args:
         Lambda (complex64): diagonal state matrix              (P,)
         B_tilde (complex64): input matrix                      (P, H)
-        Delta (float32): discretisation step sizes             (P,)
+        Delta (float32): discretization step sizes             (P,)
     Returns:
         discretized Lambda_bar (complex64), B_bar (complex64)  (P,), (P,H)
     """
@@ -276,7 +276,7 @@ class S5Layer(eqx.Module):
     P: int
     conj_sym: bool
     clip_eigs: bool = False
-    discretisation: str
+    discretization: str
     step_rescale: float = 1.0
 
     def __init__(
@@ -287,7 +287,7 @@ class S5Layer(eqx.Module):
         C_init,
         conj_sym,
         clip_eigs,
-        discretisation,
+        discretization,
         dt_min,
         dt_max,
         step_rescale,
@@ -350,11 +350,11 @@ class S5Layer(eqx.Module):
 
         self.D = normal(stddev=1.0)(D_key, (self.H,))
 
-        # Initialize learnable discretisation timescale value
+        # Initialize learnable discretization timescale value
         self.log_step = init_log_steps(step_key, (self.P, dt_min, dt_max))
 
         self.step_rescale = step_rescale
-        self.discretisation = discretisation
+        self.discretization = discretization
 
     def __call__(self, input_sequence, save_dir=None):
         if self.clip_eigs:
@@ -368,13 +368,13 @@ class S5Layer(eqx.Module):
         step = self.step_rescale * jnp.exp(self.log_step[:, 0])
 
         # Discretize
-        if self.discretisation in ["zoh"]:
+        if self.discretization in ["zoh"]:
             Lambda_bar, B_bar = discretize_zoh(Lambda, B_tilde, step)
-        elif self.discretisation in ["bilinear"]:
+        elif self.discretization in ["bilinear"]:
             Lambda_bar, B_bar = discretize_bilinear(Lambda, B_tilde, step)
         else:
             raise NotImplementedError(
-                "Discretization method {} not implemented".format(self.discretisation)
+                "Discretization method {} not implemented".format(self.discretization)
             )
 
         ys = apply_ssm(Lambda_bar, B_bar, input_sequence)
@@ -407,7 +407,7 @@ class S5Block(eqx.Module):
         C_init,
         conj_sym,
         clip_eigs,
-        discretisation,
+        discretization,
         dt_min,
         dt_max,
         step_rescale,
@@ -426,7 +426,7 @@ class S5Block(eqx.Module):
             C_init,
             conj_sym,
             clip_eigs,
-            discretisation,
+            discretization,
             dt_min,
             dt_max,
             step_rescale,
@@ -449,7 +449,6 @@ class S5Block(eqx.Module):
 
         # Save activations
         if save_dir is not None:
-            os.makedirs(save_dir, exist_ok=True)
             jnp.save(save_dir + 'activations.npy', x)
 
         return x, state
@@ -461,6 +460,7 @@ class S5(eqx.Module):
     linear_layer: eqx.nn.Linear
     classification: bool
     output_step: int
+    discretization: str
     stateful: bool = True
     nondeterministic: bool = True
     lip2: bool = False
@@ -478,7 +478,7 @@ class S5(eqx.Module):
         C_init,
         conj_sym,
         clip_eigs,
-        discretisation,
+        discretization,
         dt_min,
         dt_max,
         step_rescale,
@@ -498,7 +498,7 @@ class S5(eqx.Module):
                 C_init,
                 conj_sym,
                 clip_eigs,
-                discretisation,
+                discretization,
                 dt_min,
                 dt_max,
                 step_rescale,
@@ -509,6 +509,7 @@ class S5(eqx.Module):
         self.linear_layer = eqx.nn.Linear(H, output_dim, key=linear_layer_key)
         self.classification = classification
         self.output_step = output_step
+        self.discretization = discretization
 
     def __call__(self, x, state, key, save_dir=None):
         """Compute S5."""
@@ -517,11 +518,12 @@ class S5(eqx.Module):
         
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
-            jnp.save(save_state_dir + 'input.npy', x)
+            jnp.save(save_dir + 'input.npy', x)
 
         for i, (block, key) in enumerate(zip(self.blocks, dropkeys)):
             if save_dir is not None:
                 block_dir = save_dir + f'block_{i}/'
+                os.makedirs(block_dir, exist_ok=True)
                 x, state = block(x, state, key=key, save_dir=block_dir)
             else:
                 x, state = block(x, state, key=key, save_dir=None)
@@ -538,3 +540,42 @@ class S5(eqx.Module):
             x = jax.nn.tanh(jax.vmap(self.linear_layer)(x))
 
         return x, state
+
+    def save_params(self, save_dir):
+        """Saves parameters as directory tree"""
+        save_dir = save_dir + '/params/'
+        os.makedirs(save_dir + 'input/', exist_ok=True)
+        os.makedirs(save_dir + 'output/', exist_ok=True)
+        jnp.save(save_dir + 'input/weight.npy', self.linear_encoder.weight)
+        jnp.save(save_dir + 'input/bias.npy', self.linear_encoder.bias)
+        jnp.save(save_dir + 'output/weight.npy', self.linear_layer.weight)
+        jnp.save(save_dir + 'output/bias.npy', self.linear_layer.bias)
+
+        for i, block in enumerate(self.blocks):
+            os.makedirs(save_dir + f'block_{i}/glu/w1/', exist_ok=True)
+            os.makedirs(save_dir + f'block_{i}/glu/w2/', exist_ok=True)
+            jnp.save(save_dir + f'block_{i}/glu/w1/weight.npy', block.glu.w1.weight)
+            jnp.save(save_dir + f'block_{i}/glu/w1/bias.npy', block.glu.w1.bias)
+            jnp.save(save_dir + f'block_{i}/glu/w2/weight.npy', block.glu.w2.weight)
+            jnp.save(save_dir + f'block_{i}/glu/w2/bias.npy', block.glu.w2.bias)
+
+            Lambda = block.ssm.Lambda_re + 1j * block.ssm.Lambda_im
+            B_tilde = block.ssm.B[..., 0] + 1j * block.ssm.B[..., 1]
+            C_tilde = block.ssm.C[..., 0] + 1j * block.ssm.C[..., 1]
+            step = block.ssm.step_rescale * jnp.exp(block.ssm.log_step[:, 0])
+
+            # Discretize
+            if self.discretization in ["zoh"]:
+                Lambda_bar, B_bar = discretize_zoh(Lambda, B_tilde, step)
+            elif self.discretization in ["bilinear"]:
+                Lambda_bar, B_bar = discretize_bilinear(Lambda, B_tilde, step)
+            else:
+                raise NotImplementedError(
+                    "Discretization method {} not implemented".format(self.discretization)
+                )
+
+            jnp.save(save_dir + f'block_{i}/M.npy', jnp.diag(Lambda_bar))
+            jnp.save(save_dir + f'block_{i}/B.npy', B_bar)
+            jnp.save(save_dir + f'block_{i}/C.npy', C_tilde)
+            jnp.save(save_dir + f'block_{i}/D.npy', jnp.diag(block.ssm.D))
+            jnp.save(save_dir + f'block_{i}/steps.npy', step)

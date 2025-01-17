@@ -18,7 +18,7 @@ The module also includes the following classes and functions:
 - `binary_operator_diag`: A helper function used in the associative scan operation within `LRULayer` to process diagonal
                           elements.
 """
-
+import os
 from typing import List
 
 import equinox as eqx
@@ -98,8 +98,8 @@ class LRULayer(eqx.Module):
 
         # Save weights, SSM states, SSM outputs
         if save_dir is not None:
-            jnp.save(block_dir + 'ssm_states.npy', inner_states)
-            jnp.save(block_dir + 'ssm_outputs.npy', y)
+            jnp.save(save_dir + 'ssm_states.npy', inner_states)
+            jnp.save(save_dir + 'ssm_outputs.npy', y)
 
         return y
 
@@ -133,7 +133,6 @@ class LRUBlock(eqx.Module):
 
         # Save activations
         if save_dir is not None:
-            os.makedirs(save_dir, exist_ok=True)
             jnp.save(save_dir + 'activations.npy', x)
 
         return x, state
@@ -183,11 +182,12 @@ class LRU(eqx.Module):
         
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
-            jnp.save(save_state_dir + 'input.npy', x)
+            jnp.save(save_dir + 'input.npy', x)
 
         for i, (block, key) in enumerate(zip(self.blocks, dropkeys)):
             if save_dir is not None:
                 block_dir = save_dir + f'block_{i}/'
+                os.makedirs(block_dir, exist_ok=True)
                 x, state = block(x, state, key=key, save_dir=block_dir)
             else:
                 x, state = block(x, state, key=key, save_dir=None)
@@ -204,3 +204,32 @@ class LRU(eqx.Module):
             x = jax.nn.tanh(jax.vmap(self.linear_layer)(x))
 
         return x, state
+
+    def save_params(self, save_dir):
+        """Saves parameters as directory tree"""
+        save_dir = save_dir + '/params/'
+        os.makedirs(save_dir + 'input/', exist_ok=True)
+        os.makedirs(save_dir + 'output/', exist_ok=True)
+        jnp.save(save_dir + 'input/weight.npy', self.linear_encoder.weight)
+        jnp.save(save_dir + 'input/bias.npy', self.linear_encoder.bias)
+        jnp.save(save_dir + 'output/weight.npy', self.linear_layer.weight)
+        jnp.save(save_dir + 'output/bias.npy', self.linear_layer.bias)
+
+        for i, block in enumerate(self.blocks):
+            os.makedirs(save_dir + f'block_{i}/glu/w1/', exist_ok=True)
+            os.makedirs(save_dir + f'block_{i}/glu/w2/', exist_ok=True)
+            jnp.save(save_dir + f'block_{i}/glu/w1/weight.npy', block.glu.w1.weight)
+            jnp.save(save_dir + f'block_{i}/glu/w1/bias.npy', block.glu.w1.bias)
+            jnp.save(save_dir + f'block_{i}/glu/w2/weight.npy', block.glu.w2.weight)
+            jnp.save(save_dir + f'block_{i}/glu/w2/bias.npy', block.glu.w2.bias)
+
+            Lambda = jnp.exp(-jnp.exp(block.lru.nu_log) + 1j * jnp.exp(block.lru.theta_log))
+            B_norm = (block.lru.B_re + 1j * block.lru.B_im) * jnp.expand_dims(
+                jnp.exp(block.lru.gamma_log), axis=-1
+            )
+            C = block.lru.C_re + 1j * block.lru.C_im
+
+            jnp.save(save_dir + f'block_{i}/M.npy', jnp.diag(Lambda))
+            jnp.save(save_dir + f'block_{i}/B.npy', B_norm)
+            jnp.save(save_dir + f'block_{i}/C.npy', C)
+            jnp.save(save_dir + f'block_{i}/D.npy', jnp.diag(block.lru.D))

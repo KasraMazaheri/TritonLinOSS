@@ -14,10 +14,13 @@ Arguments for `run_experiments`:
 - `dataset_names`: List of datasets to train on.
 - `experiment_folder`: Directory containing JSON configuration files.
 """
+import os
 import sys
 import json
 import diffrax
 import glob
+import pickle
+import equinox as eqx
 
 from train import create_dataset_model_and_train
 from data_dir.project_dir import get_linoss_directory
@@ -52,14 +55,14 @@ def run_experiments(
                 print_steps = data["print_steps"]
                 batch_size = data["batch_size"]
                 metric = data["metric"]
+                linoss_discretization = None
+                damping = False
+                parameterization = None
                 if model_name == "LinOSS":
                     linoss_discretization = data["linoss_discretization"]
                     damping = data["damping"]
-                    parameterization = data["parameterization"]
-                else:
-                    linoss_discretization = None
-                    damping = False
-                    parameterization = None
+                    if damping:
+                        parameterization = data["parameterization"]
                 use_presplit = data["use_presplit"]
                 T = data["T"]
                 if model_name in ["lru", "S5", "S6", "mamba", "LinOSS"]:
@@ -142,20 +145,22 @@ def run_experiments(
 
                 for seed in seeds:
                     print(f"Running experiment with seed: {seed}")
-                    run_fn(seed=seed, **run_args)
+                    model, state, hyperparameters, dataset_args = run_fn(seed=seed, **run_args)
 
                     if save_model:
-                        save_dir = run_args['output_parent_dir'] + f"saves/{model_name}/{dataset_name}/{seed}/"
+                        save_dir = run_args["output_parent_dir"] + f"/saves/{model_name}/{dataset_name}/id_{idx}/{seed}/"
                         os.makedirs(save_dir, exist_ok=True)
-                        with open(save_dir + f'hyperparameters.pkl', "wb") as f:
+                        with open(save_dir + "hyperparameters.pkl", "wb") as f:
                             pickle.dump(hyperparameters, f)
-                        eqx.tree_serialise_leaves(save_dir + f'model.eqx', model)
-                        eqx.tree_serialise_leaves(save_dir + f'state.eqx', state)
+                        with open(save_dir + "dataset_args.pkl", "wb") as f:
+                            pickle.dump(dataset_args, f)
+                        eqx.tree_serialise_leaves(save_dir + f"model.eqx", model)
+                        eqx.tree_serialise_leaves(save_dir + f"state.eqx", state)
 
 
 if __name__ == "__main__":
-    task_id = int(sys.argv[1])
-    num_tasks = int(sys.argv[2])
+    task_id = 0 # int(sys.argv[1])
+    num_tasks = 1 # int(sys.argv[2])
 
     model_names = ["LinOSS"]
     dataset_names = ["ppg"]

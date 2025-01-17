@@ -286,14 +286,17 @@ class LinOSSLayer(eqx.Module):
     ):
         A_key, G_key, B_key, C_key, D_key, step_key, key = jr.split(key, 7)
         self.A_diag = random.uniform(A_key, shape=(ssm_size,))
-        if parameterization == "stable":
-            self.G_diag = random.uniform(G_key, shape=(ssm_size,))
-        elif parameterization == "complex":
-            self.G_diag = 2 * random.uniform(G_key, shape=(ssm_size,)) - 1
-        else: 
-            raise NotImplementedError(
-                "Parameterization {} not implemented".format(parameterization)
-            )
+        if damping:
+            if parameterization == "stable":
+                self.G_diag = random.uniform(G_key, shape=(ssm_size,))
+            elif parameterization == "complex":
+                self.G_diag = 2 * random.uniform(G_key, shape=(ssm_size,)) - 1
+            else: 
+                raise NotImplementedError(
+                    "Parameterization {} not implemented".format(parameterization)
+                )
+        else:
+            self.G_diag = None
         self.B = simple_uniform_init(B_key,shape=(ssm_size, H, 2),std=1./math.sqrt(H))
         self.C = simple_uniform_init(C_key,shape=(H, ssm_size, 2),std=1./math.sqrt(ssm_size))
         self.D = normal(stddev=1.0)(D_key, (H,))
@@ -306,34 +309,39 @@ class LinOSSLayer(eqx.Module):
         A_diag = nn.relu(self.A_diag)
         steps = nn.sigmoid(self.steps)
         
-        if self.discretization == "IM" and self.parameterization == "stable":
-            G_diag_tilde = nn.relu(self.G_diag)
-        elif self.discretization == "IM" and self.parameterization == "complex":
-            G_diag_tilde = jnp.sqrt(A_diag) * nn.sigmoid(self.G_diag)
-        elif self.discretization == "IMEX" and self.parameterization == "stable":
-            G_diag_tilde = nn.relu(steps / 2 * A_diag - 2 / steps) + nn.relu(self.G_diag)
-        elif self.discretization == "IMEX" and self.parameterization == "complex":
-            G_diag_tilde = nn.relu(steps * A_diag + (2 * jnp.sqrt(A_diag)) * nn.tanh(self.G_diag))
-        else: 
-            raise NotImplementedError(
-                "Discretization {} and parameterization {} not implemented".format(self.discretization, self.parameterization)
-            )
-
         B_complex = self.B[..., 0] + 1j * self.B[..., 1]
         C_complex = self.C[..., 0] + 1j * self.C[..., 1]
 
-        if self.discretization == 'IMEX':
+        if self.discretization == "IM":
             if self.damping:
-                ys = apply_damped_linoss_imex(A_diag, G_diag_tilde, B_complex, input_sequence, steps)
-            else:
-                ys = apply_linoss_imex(A_diag, B_complex, input_sequence, steps)
-        elif self.discretization == 'IM':
-            if self.damping:
+                if self.parameterization == "stable":
+                    G_diag_tilde = nn.relu(self.G_diag)
+                elif self.parameterization == "complex":
+                    G_diag_tilde = jnp.sqrt(A_diag) * nn.sigmoid(self.G_diag)
+                else:
+                    raise NotImplementedError(
+                        "Discretization {} and parameterization {} not implemented".format(self.discretization, self.parameterization)
+                    )
                 ys = apply_damped_linoss_im(A_diag, G_diag_tilde, B_complex, input_sequence, steps)
             else:
                 ys = apply_linoss_im(A_diag, B_complex, input_sequence, steps)
+        elif self.discretization == "IMEX":
+            if self.damping:
+                if self.parameterization == "stable":
+                    G_diag_tilde = nn.relu(steps / 2 * A_diag - 2 / steps) + nn.relu(self.G_diag)
+                elif self.parameterization == "complex":
+                    G_diag_tilde = nn.relu(steps * A_diag + (2 * jnp.sqrt(A_diag)) * nn.tanh(self.G_diag))
+                else:
+                    raise NotImplementedError(
+                        "Discretization {} and parameterization {} not implemented".format(self.discretization, self.parameterization)
+                    )
+                ys = apply_damped_linoss_imex(A_diag, G_diag_tilde, B_complex, input_sequence, steps)
+            else:
+                ys = apply_linoss_imex(A_diag, B_complex, input_sequence, steps)
         else:
-            print('Discretization type not implemented')
+            raise NotImplementedError(
+                "Discretization {} not implemented".format(self.discretization)
+            )
 
         # Apply SSM Output Operations Cx + Du
         Cy = jax.vmap(lambda x: (C_complex @ x).real)(ys)
@@ -394,7 +402,6 @@ class LinOSSBlock(eqx.Module):
 
         # Save activations
         if save_dir is not None:
-            os.makedirs(save_dir, exist_ok=True)
             jnp.save(save_dir + 'activations.npy', x)
 
         return x, state
@@ -405,9 +412,11 @@ class LinOSS(eqx.Module):
     blocks: List[LinOSSBlock]
     linear_layer: eqx.nn.Linear
     classification: bool
+    normalized: bool
     output_step: int
     discretization: str
     damping: bool
+    parameterization: str
     stateful: bool = True
     nondeterministic: bool = True
     lip2: bool = False
@@ -420,6 +429,7 @@ class LinOSS(eqx.Module):
         H,
         output_dim,
         classification,
+        normalized,
         output_step,
         discretization,
         damping,
@@ -445,9 +455,11 @@ class LinOSS(eqx.Module):
         ]
         self.linear_layer = eqx.nn.Linear(H, output_dim, key=linear_layer_key)
         self.classification = classification
+        self.normalized = normalized
         self.output_step = output_step
         self.discretization = discretization
         self.damping = damping
+        self.parameterization = parameterization
 
     def __call__(self, x, state, key, save_dir=None):
         """Compute LinOSS."""
@@ -456,11 +468,12 @@ class LinOSS(eqx.Module):
         
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
-            jnp.save(save_state_dir + 'input.npy', x)
+            jnp.save(save_dir + 'input.npy', x)
 
         for i, (block, key) in enumerate(zip(self.blocks, dropkeys)):
             if save_dir is not None:
                 block_dir = save_dir + f'block_{i}/'
+                os.makedirs(block_dir, exist_ok=True)
                 x, state = block(x, state, key=key, save_dir=block_dir)
             else:
                 x, state = block(x, state, key=key, save_dir=None)
@@ -472,9 +485,11 @@ class LinOSS(eqx.Module):
             x = jax.nn.softmax(self.linear_layer(x), axis=0)
         else:
             x = x[self.output_step - 1 :: self.output_step]
+            x = jax.vmap(self.linear_layer)(x)
             if save_dir is not None:
-                jnp.save(save_dir + 'output.npy', jax.vmap(self.linear_layer)(x)) 
-            x = jax.nn.tanh(jax.vmap(self.linear_layer)(x))
+                jnp.save(save_dir + 'output.npy', x) 
+            if self.normalized:
+                x = jax.nn.tanh(x)
 
         return x, state
     
@@ -497,21 +512,40 @@ class LinOSS(eqx.Module):
             jnp.save(save_dir + f'block_{i}/glu/w2/bias.npy', block.glu.w2.bias)
 
             A_diag = nn.relu(block.ssm.A_diag)
-            G_diag = nn.relu(block.ssm.steps / 2 * A_diag - 2 / block.ssm.steps) + nn.relu(block.ssm.G_diag)
             B_complex = block.ssm.B[..., 0] + 1j * block.ssm.B[..., 1]
             C_complex = block.ssm.C[..., 0] + 1j * block.ssm.C[..., 1]
             D = jnp.diag(block.ssm.D)
             steps = nn.sigmoid(block.ssm.steps)
 
-            if self.discretization == 'IM' and not self.damping:
-                M = make_linoss_im_recurrence(A_diag, steps)
-            elif self.discretization == 'IMEX' and not self.damping:
-                M = make_linoss_imex_recurrence(A_diag, steps)
-            elif self.discretization == 'IMEX' and self.damping:
-                M = make_damped_linoss_imex_recurrence(A_diag, G_diag, steps)
+            if self.discretization == "IM":
+                if self.damping:
+                    if self.parameterization == "stable":
+                        G_diag_tilde = nn.relu(self.G_diag)
+                    elif self.parameterization == "complex":
+                        G_diag_tilde = jnp.sqrt(A_diag) * nn.sigmoid(self.G_diag)
+                    else:
+                        raise NotImplementedError(
+                            "Discretization {} and parameterization {} not implemented".format(self.discretization, self.parameterization)
+                        )
+                    M = make_damped_linoss_im_recurrence(A_diag, G_diag, steps)
+                else:
+                    M = make_linoss_im_recurrence(A_diag, steps)
+            elif self.discretization == "IMEX":
+                if self.damping:
+                    if self.parameterization == "stable":
+                        G_diag_tilde = nn.relu(steps / 2 * A_diag - 2 / steps) + nn.relu(self.G_diag)
+                    elif self.parameterization == "complex":
+                        G_diag_tilde = nn.relu(steps * A_diag + (2 * jnp.sqrt(A_diag)) * nn.tanh(self.G_diag))
+                    else:
+                        raise NotImplementedError(
+                            "Discretization {} and parameterization {} not implemented".format(self.discretization, self.parameterization)
+                        )
+                    M = make_damped_linoss_imex_recurrence(A_diag, G_diag, steps)
+                else:
+                    M = make_linoss_imex_recurrence(A_diag, steps)
             else:
                 raise NotImplementedError(
-                    "Discretization {}, damping = {} not implemented".format(self.discretization, self.damping)
+                    "Discretization {} not implemented".format(self.discretization)
                 )
 
             jnp.save(save_dir + f'block_{i}/M.npy', M)

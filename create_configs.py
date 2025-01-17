@@ -66,7 +66,7 @@ if __name__ == "__main__":
     datasets = ["ppg"]
 
     # Enumerate hyperparameter grid
-    learning_rates = [1e-5, 1e-2]
+    learning_rates = [1e-3, 1e-4, 1e-5]
     hidden_dims = [16, 64, 128]
     state_dims = [16, 64, 256]
     blocks = [2, 4, 6]

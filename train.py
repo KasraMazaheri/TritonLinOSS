@@ -71,7 +71,7 @@ def calc_output(model, X, state, key, stateful, nondeterministic):
 
 @eqx.filter_jit
 @eqx.filter_value_and_grad(has_aux=True)
-def classification_loss(diff_model, static_model, X, y, state, key):
+def classification_loss(diff_model, static_model, X, y, state, key, penalty):
     model = eqx.combine(diff_model, static_model)
     pred_y, state = calc_output(
         model, X, state, key, model.stateful, model.nondeterministic
@@ -92,12 +92,13 @@ def classification_loss(diff_model, static_model, X, y, state, key):
 
 @eqx.filter_jit
 @eqx.filter_value_and_grad(has_aux=True)
-def regression_loss(diff_model, static_model, X, y, state, key):
+def regression_loss(diff_model, static_model, X, y, state, key, penalty):
     model = eqx.combine(diff_model, static_model)
     pred_y, state = calc_output(
         model, X, state, key, model.stateful, model.nondeterministic
     )
-    pred_y = pred_y[:, :, 0]
+    pred_y = jnp.squeeze(pred_y)
+    
     norm = 0
     if model.lip2:
         for layer in model.vf.mlp.layers:
@@ -106,16 +107,19 @@ def regression_loss(diff_model, static_model, X, y, state, key):
                 + jnp.linalg.norm(layer.bias, axis=-1)
             )
         norm *= model.lambd
+
+    first_vel = jnp.linalg.norm(pred_y[:,1] - y[:,0]) ** 2.
+
     return (
-        jnp.mean(jnp.mean((pred_y - y) ** 2, axis=1)) + norm,
+        jnp.mean(jnp.mean((pred_y - y) ** 2., axis=1)) + norm + penalty * first_vel,
         state,
     )
 
 
 @eqx.filter_jit
-def make_step(model, filter_spec, X, y, loss_fn, state, opt, opt_state, key):
+def make_step(model, filter_spec, X, y, loss_fn, state, opt, opt_state, key, penalty):
     diff_model, static_model = eqx.partition(model, filter_spec)
-    (value, state), grads = loss_fn(diff_model, static_model, X, y, state, key)
+    (value, state), grads = loss_fn(diff_model, static_model, X, y, state, key, penalty)
     updates, opt_state = opt.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
     return model, state, opt_state, value
@@ -172,6 +176,10 @@ def train_model(
     else:
         loss_fn = regression_loss
 
+    penalty = 0.0
+    if dataset_name in ["pouring", "scoopingPepper", "scoopingPowder", "stirring"]:
+        penalty = 1.0
+
     running_loss = 0.0
     if metric == "accuracy":
         all_val_metric = [0.0]
@@ -191,7 +199,7 @@ def train_model(
         stepkey, key = jr.split(key, 2)
         X, y = data
         model, state, opt_state, value = make_step(
-            model, filter_spec, X, y, loss_fn, state, opt, opt_state, stepkey
+            model, filter_spec, X, y, loss_fn, state, opt, opt_state, stepkey, penalty
         )
         running_loss += value
         if (step + 1) % print_steps == 0:
@@ -218,8 +226,8 @@ def train_model(
                     jnp.argmax(prediction, axis=1) == jnp.argmax(y, axis=1)
                 )
             else:
-                prediction = prediction[:, :, 0]
-                train_metric = jnp.mean(jnp.mean((prediction - y) ** 2, axis=1), axis=0)
+                prediction = jnp.squeeze(prediction)
+                train_metric = jnp.mean((prediction - y) ** 2)
             predictions = []
             labels = []
             for data in dataloaders["val"].loop_epoch(batch_size):
@@ -243,8 +251,8 @@ def train_model(
                     jnp.argmax(prediction, axis=1) == jnp.argmax(y, axis=1)
                 )
             else:
-                prediction = prediction[:, :, 0]
-                val_metric = jnp.mean(jnp.mean((prediction - y) ** 2, axis=1), axis=0)
+                prediction = jnp.squeeze(prediction)
+                val_metric = jnp.mean((prediction - y) ** 2)
             end = time.time()
             total_time = end - start
             print(
@@ -285,10 +293,8 @@ def train_model(
                             jnp.argmax(prediction, axis=1) == jnp.argmax(y, axis=1)
                         )
                     else:
-                        prediction = prediction[:, :, 0]
-                        test_metric = jnp.mean(
-                            jnp.mean((prediction - y) ** 2, axis=1), axis=0
-                        )
+                        prediction = jnp.squeeze(prediction)
+                        test_metric = jnp.mean((prediction - y) ** 2)
                     print(f"Test metric: {test_metric}")
                 running_loss = 0.0
                 all_train_metric.append(train_metric)
@@ -307,11 +313,11 @@ def train_model(
 
     print(f"Test metric: {test_metric}")
     os.makedirs(results_dir, exist_ok=True)
-    f = open(results_dir + '/id_' + str(id) + '.txt', 'a')
-    f.write(str(test_metric * 100.) + '\n')
+    f = open(results_dir + "/id_" + str(id) + ".txt", "a")
+    f.write(str(test_metric * 100.) + "\n")
     f.close()
 
-    return model
+    return model, state
 
 
 def create_dataset_model_and_train(
@@ -338,10 +344,10 @@ def create_dataset_model_and_train(
     output_parent_dir="",
     id=None,
 ):
-    if model_name == 'LinOSS':
-        model_directory_name = model_name + '_' + linoss_discretization
+    if model_name == "LinOSS":
+        model_directory_name = model_name + "_" + linoss_discretization
         if damping:
-            model_directory_name += '_damped'
+            model_directory_name += "_damped_" + parameterization
     else:
         model_directory_name = model_name
 
@@ -361,43 +367,49 @@ def create_dataset_model_and_train(
             output_str += f"_rtol_{v.rtol}_atol_{v.atol}"
     output_str += f"_seed_{seed}"
     output_dir = output_parent_dir + output_str
-
     results_dir = output_parent_dir + "/results/" + model_directory_name + "/" + dataset_name
 
     key = jr.PRNGKey(seed)
-
     datasetkey, modelkey, trainkey, key = jr.split(key, 4)
     print(f"Creating dataset {dataset_name}")
 
-    dataset = create_dataset(
-        data_dir,
-        dataset_name,
-        stepsize=stepsize,
-        depth=logsig_depth,
-        include_time=include_time,
-        T=T,
-        use_idxs=False,
-        use_presplit=use_presplit,
-        key=datasetkey,
-    )
+    dataset_args = {
+        "data_dir": data_dir,
+        "name": dataset_name,
+        "stepsize": stepsize,
+        "depth": logsig_depth,
+        "include_time": include_time,
+        "T": T,
+        "use_idxs": False,
+        "use_presplit": use_presplit,
+        "key": datasetkey,
+    }
+    dataset = create_dataset(**dataset_args)
+
+    classification = metric == "accuracy"
+    normalized = True
+    if dataset_name in ["pouring", "scoopingPepper", "scoopingPowder", "stirring", "oscillatory"]:
+        normalized = False
 
     print(f"Creating model {model_name}")
-    classification = metric == "accuracy"
-    model, state = create_model(
-        model_name,
-        dataset.data_dim,
-        dataset.logsig_dim,
-        logsig_depth,
-        dataset.intervals,
-        dataset.label_dim,
-        classification=classification,
-        output_step=output_step,
-        linoss_discretization=linoss_discretization,
-        damping=damping,
-        parameterization=parameterization,
+    hyperparameters = {
+        "model_name": model_name,
+        "data_dim": dataset.data_dim,
+        "logsig_dim": dataset.logsig_dim,
+        "logsig_depth": logsig_depth,
+        "intervals": dataset.intervals,
+        "label_dim": dataset.label_dim,
+        "classification": metric == "accuracy",
+        "normalized": normalized,
+        "output_step": output_step,
+        "linoss_discretization": linoss_discretization,
+        "damping": damping,
+        "parameterization": parameterization,
         **model_args,
-        key=modelkey,
-    )
+        "key": modelkey,
+    }
+    model, state = create_model(**hyperparameters)
+
     filter_spec = jax.tree_util.tree_map(lambda _: True, model)
     if model_name == "nrde" or model_name == "log_ncde":
         dataloaders = dataset.path_dataloaders
@@ -414,7 +426,7 @@ def create_dataset_model_and_train(
     else:
         dataloaders = dataset.raw_dataloaders
 
-    model = train_model(
+    model, state = train_model(
         dataset_name,
         model,
         metric,
@@ -432,4 +444,4 @@ def create_dataset_model_and_train(
         id,
     )
 
-    return model
+    return model, state, hyperparameters, dataset_args

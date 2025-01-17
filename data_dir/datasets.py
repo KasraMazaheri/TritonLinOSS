@@ -221,12 +221,12 @@ def dataset_generator(
         "val": Dataloader(val_coeff_data, val_labels, inmemory),
         "test": Dataloader(test_coeff_data, test_labels, inmemory),
     }
-
     path_dataloaders = {
         "train": Dataloader(train_path_data, train_labels, inmemory),
         "val": Dataloader(val_path_data, val_labels, inmemory),
         "test": Dataloader(test_path_data, test_labels, inmemory),
     }
+
     return Dataset(
         name,
         raw_dataloaders,
@@ -251,7 +251,6 @@ def create_uea_dataset(
     *,
     key,
 ):
-
     if use_presplit:
         idxs = None
         with open(data_dir + f"/processed/UEA/{name}/X_train.pkl", "rb") as f:
@@ -314,7 +313,16 @@ def create_uea_dataset(
     )
 
 
-def create_toy_dataset(data_dir, name, stepsize, depth, include_time, T, *, key):
+def create_toy_dataset(
+    data_dir, 
+    name, 
+    stepsize, 
+    depth, 
+    include_time, 
+    T, 
+    *, 
+    key
+):
     with open(data_dir + "/processed/toy/signature/data.pkl", "rb") as f:
         data = pickle.load(f)
     with open(data_dir + "/processed/toy/signature/labels.pkl", "rb") as f:
@@ -343,7 +351,14 @@ def create_toy_dataset(data_dir, name, stepsize, depth, include_time, T, *, key)
 
 
 def create_ppg_dataset(
-    data_dir, use_presplit, stepsize, depth, include_time, T, *, key
+    data_dir, 
+    use_presplit, 
+    stepsize, 
+    depth, 
+    include_time, 
+    T, 
+    *, 
+    key
 ):
     with open(data_dir + "/processed/PPG/ppg/X_train.pkl", "rb") as f:
         train_data = pickle.load(f)
@@ -393,6 +408,47 @@ def create_ppg_dataset(
     )
 
 
+def create_SE3_dataset(
+    data_dir, 
+    name, 
+    use_presplit, 
+    stepsize, 
+    depth, 
+    include_time, 
+    T, 
+    *, 
+    key
+):
+    if use_presplit:
+        raise NotImplementedError(
+            "Pre-split SE3 dataset not currently implemented"
+        )
+    else:
+        with open(data_dir + f"/processed/SE3/{name}/data.pkl", "rb") as f:
+            data = pickle.load(f)
+        with open(data_dir + f"/processed/SE3/{name}/labels.pkl", "rb") as f:
+            labels = pickle.load(f)
+
+    if include_time:
+        ts = (T / data.shape[1]) * jnp.repeat(
+            jnp.arange(data.shape[1])[None, :], data.shape[0], axis=0
+        )
+        data = jnp.concatenate([ts[:, :, None], data], axis=2)
+
+    return dataset_generator(
+        name,
+        data,
+        labels,
+        stepsize,
+        depth,
+        include_time,
+        T,
+        inmemory=False,
+        use_presplit=use_presplit,
+        key=key,
+    )
+
+
 def create_dataset(
     data_dir,
     name,
@@ -410,15 +466,7 @@ def create_dataset(
 
     if name in uea_subfolders:
         return create_uea_dataset(
-            data_dir,
-            name,
-            use_idxs,
-            use_presplit,
-            stepsize,
-            depth,
-            include_time,
-            T,
-            key=key,
+            data_dir, name, use_idxs, use_presplit, stepsize, depth, include_time, T, key=key
         )
     elif name[:-1] in toy_subfolders:
         return create_toy_dataset(
@@ -428,5 +476,11 @@ def create_dataset(
         return create_ppg_dataset(
             data_dir, use_presplit, stepsize, depth, include_time, T, key=key
         )
+    elif name in ["pouring", "stirring", "scoopingPepper", "scoopingPowder"]:
+        return create_SE3_dataset(
+            data_dir, name, use_presplit, stepsize, depth, include_time, T, key=key
+        )
+    elif name == "oscillatory":
+        raise NotImplementedError("Oscillatory dataset has not yet been implemented")
     else:
-        raise ValueError(f"Dataset {name} not found in UEA folder and not toy dataset")
+        raise ValueError(f"Dataset {name} not found")
