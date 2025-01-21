@@ -17,7 +17,6 @@ def create_configs(
     time,
     discretization,
     damping,
-    parameterization,
 ):
     combos = itertools.product(
         learning_rates, 
@@ -26,8 +25,7 @@ def create_configs(
         blocks, 
         time, 
         discretization, 
-        damping, 
-        parameterization
+        damping
     )
 
     for i, (lr, hd, sd, nb, t, dis, dam, par) in enumerate(combos):
@@ -49,7 +47,6 @@ def create_configs(
         data["time"] = str(t)
         data["linoss_discretization"] = str(dis)
         data["damping"] = bool(dam)
-        data["parameterization"] = str(par)
 
         with open(out_filename, "w") as out_file:
             json.dump(data, out_file, indent=4)
@@ -73,7 +70,6 @@ if __name__ == "__main__":
     time = [False, True]
     discretization = ["IMEX"]
     damping = [True]
-    parameterization = ["stable"]
 
     # Write configuration files
     for dataset in datasets:
@@ -90,5 +86,4 @@ if __name__ == "__main__":
                 time,
                 discretization,
                 damping,
-                parameterization,
             )

@@ -62,7 +62,7 @@ def create_model(
     vf_depth=None,
     vf_width=None,
     classification=True,
-    normalized=True,
+    linear_output=False,
     output_step=1,
     ssm_dim=None,
     ssm_blocks=None,
@@ -74,7 +74,8 @@ def create_model(
     lambd=0.0,
     linoss_discretization='IM',
     damping=False,
-    parameterization="stable",
+    r_min=0.5,
+    theta_max=0.785,
     *,
     key,
 ):
@@ -204,11 +205,12 @@ def create_model(
             hidden_dim,
             label_dim,
             classification,
-            normalized,
+            linear_output,
             output_step,
             linoss_discretization,
             damping,
-            parameterization,
+            r_min,
+            theta_max,
             key=key,
         )
         state = eqx.nn.State(ssm)

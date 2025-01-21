@@ -57,12 +57,13 @@ def run_experiments(
                 metric = data["metric"]
                 linoss_discretization = None
                 damping = False
-                parameterization = None
+                r_min = None
+                theta_max = None
                 if model_name == "LinOSS":
                     linoss_discretization = data["linoss_discretization"]
                     damping = data["damping"]
-                    if damping:
-                        parameterization = data["parameterization"]
+                    r_min = data["r_min"]
+                    theta_max = data["theta_max"]
                 use_presplit = data["use_presplit"]
                 T = data["T"]
                 if model_name in ["lru", "S5", "S6", "mamba", "LinOSS"]:
@@ -131,7 +132,8 @@ def run_experiments(
                     "logsig_depth": logsig_depth,
                     "linoss_discretization": linoss_discretization,
                     "damping": damping,
-                    "parameterization": parameterization,
+                    "r_min": r_min,
+                    "theta_max": theta_max,
                     "model_args": model_args,
                     "num_steps": num_steps,
                     "print_steps": print_steps,
@@ -165,6 +167,7 @@ if __name__ == "__main__":
     model_names = ["LinOSS"]
     dataset_names = ["ppg"]
     experiment_folder = get_linoss_directory() / "experiment_configs" / "random"
+    save_model = False
 
     run_experiments(
         model_names, 
@@ -172,5 +175,5 @@ if __name__ == "__main__":
         str(experiment_folder), 
         task_id, 
         num_tasks,
-        save_model=False,
+        save_model=save_model,
     )

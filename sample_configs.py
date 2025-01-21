@@ -3,12 +3,13 @@ import json
 import itertools
 import numpy.random as random
 from scipy.stats import loguniform
+import numpy as np
 
 from data_dir.project_dir import get_linoss_directory
 
 
 def sample_configs(
-    in_dir,
+    base_config,
     out_dir,
     model_name,
     dataset_name,
@@ -18,7 +19,6 @@ def sample_configs(
 ):
     for i in range(num_samples):
         # I/O
-        in_filename = in_dir / model / (dataset + ".json")
         os.makedirs(out_dir / model / dataset , exist_ok=True)
         out_filename = out_dir / model / dataset / f"config_{i:03}.json"
 
@@ -30,7 +30,7 @@ def sample_configs(
         }
 
         # Read/write config
-        with open(in_filename, "r") as in_file:
+        with open(base_config, "r") as in_file:
             data = json.load(in_file)
 
         data["dataset_name"] = dataset_name
@@ -44,25 +44,25 @@ def sample_configs(
 if __name__ == "__main__":
     # Input / output config files
     linoss_dir = get_linoss_directory()
-    in_dir = linoss_dir / "experiment_configs" / "repeats" 
-    out_dir = linoss_dir / "experiment_configs" / "random"
+    out_dir = linoss_dir / "experiment_configs" / "oscillator_experiment"
 
     # Models & Datasets
     models = ["LinOSS"]
-    datasets = ["ppg"]
+    datasets = ["multi_damped_harmonic_oscillator"]
 
     # Enumerate hyperparameter grid (vals, dtype)
     # Continuous
-    learning_rates = ([1e-5, 1e-2], float)
+    learning_rates = ([1e-4, 1e-2], float)
+    r_min = ([0.5, 0.9], float)
+    theta_max = ([np.pi/10, np.pi/4], float)
     # Discrete
-    hidden_dims = ([16, 64, 128], int)
-    state_dims = ([16, 64, 128], int) # ssm_dim=256 memory error with PPG
-    blocks = ([2, 4, 6], int)
+    hidden_dims = ([16, 64], int)
+    state_dims = ([16, 64], int)
+    blocks = ([2, 4], int)
     time = ([False, True], str)
     # Constant params
-    discretization = (["IMEX"], str)
-    damping = ([True], bool)
-    parameterization = (["complex"], str)
+    discretization = (["IM"], str)
+    damping = ([False], bool)
 
     # Number of configurations
     num_samples = 10
@@ -70,13 +70,16 @@ if __name__ == "__main__":
     # Write configuration files
     for dataset in datasets:
         for model in models:
+            base_config = linoss_dir / "experiment_configs" / "repeats" / model / dataset / "config_000.json"
             sample_configs(
-                in_dir,
+                base_config,
                 out_dir,
                 model,
                 dataset,
                 continuous_params={
                     "lr": learning_rates,
+                    "r_min": r_min,
+                    "theta_max": theta_max,
                 }, 
                 discrete_params={
                     "hidden_dim": hidden_dims, 
@@ -85,7 +88,6 @@ if __name__ == "__main__":
                     "time": time, 
                     "linoss_discretization": discretization, 
                     "damping": damping,
-                    "parameterization": parameterization,
                 },
                 num_samples=num_samples,
             )

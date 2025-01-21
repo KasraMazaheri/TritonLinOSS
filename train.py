@@ -108,10 +108,10 @@ def regression_loss(diff_model, static_model, X, y, state, key, penalty):
             )
         norm *= model.lambd
 
-    first_vel = jnp.linalg.norm(pred_y[:,1] - y[:,0]) ** 2.
+    first_vel_penalty = penalty * jnp.linalg.norm(pred_y[:,1] - y[:,0]) ** 2.
 
     return (
-        jnp.mean(jnp.mean((pred_y - y) ** 2., axis=1)) + norm + penalty * first_vel,
+        jnp.mean(jnp.mean((pred_y - y) ** 2., axis=1)) + norm + first_vel_penalty,
         state,
     )
 
@@ -334,7 +334,8 @@ def create_dataset_model_and_train(
     logsig_depth,
     linoss_discretization,
     damping,
-    parameterization,
+    r_min,
+    theta_max,
     model_args,
     num_steps,
     print_steps,
@@ -347,7 +348,7 @@ def create_dataset_model_and_train(
     if model_name == "LinOSS":
         model_directory_name = model_name + "_" + linoss_discretization
         if damping:
-            model_directory_name += "_damped_" + parameterization
+            model_directory_name += "_damped"
     else:
         model_directory_name = model_name
 
@@ -387,9 +388,15 @@ def create_dataset_model_and_train(
     dataset = create_dataset(**dataset_args)
 
     classification = metric == "accuracy"
-    normalized = True
-    if dataset_name in ["pouring", "scoopingPepper", "scoopingPowder", "stirring", "oscillatory"]:
-        normalized = False
+    linear_output = dataset_name in [
+        "pouring", 
+        "scoopingPepper", 
+        "scoopingPowder", 
+        "stirring", 
+        "ms_damped_harmonic_oscillator",
+        "long_damped_harmonic_oscillator",
+        "multi_damped_harmonic_oscillator"
+    ]
 
     print(f"Creating model {model_name}")
     hyperparameters = {
@@ -400,11 +407,12 @@ def create_dataset_model_and_train(
         "intervals": dataset.intervals,
         "label_dim": dataset.label_dim,
         "classification": metric == "accuracy",
-        "normalized": normalized,
+        "linear_output": linear_output,
         "output_step": output_step,
         "linoss_discretization": linoss_discretization,
         "damping": damping,
-        "parameterization": parameterization,
+        "r_min": r_min,
+        "theta_max": theta_max,
         **model_args,
         "key": modelkey,
     }

@@ -205,7 +205,13 @@ def dataset_generator(
         )
 
     data_dim = train_data.shape[-1]
-    if len(train_labels.shape) == 1 or name == "ppg":
+    onedim_regression_tasks = [
+        "ppg", 
+        "ms_damped_harmonic_oscillator", 
+        "long_damped_harmonic_oscillator", 
+        "multi_damped_harmonic_oscillator"
+    ]
+    if len(train_labels.shape) == 1 or name in onedim_regression_tasks:
         label_dim = 1
     else:
         label_dim = train_labels.shape[-1]
@@ -449,6 +455,64 @@ def create_SE3_dataset(
     )
 
 
+def create_synthetic_oscillator_dataset(
+    data_dir,
+    name, 
+    use_presplit, 
+    stepsize, 
+    depth, 
+    include_time, 
+    T, 
+    *, 
+    key
+):
+    with open(data_dir + f"/processed/synthetic_oscillator/{name}/X_train.pkl", "rb") as f:
+        train_data = pickle.load(f)
+    with open(data_dir + f"/processed/synthetic_oscillator/{name}/y_train.pkl", "rb") as f:
+        train_labels = pickle.load(f)
+    with open(data_dir + f"/processed/synthetic_oscillator/{name}/X_val.pkl", "rb") as f:
+        val_data = pickle.load(f)
+    with open(data_dir + f"/processed/synthetic_oscillator/{name}/y_val.pkl", "rb") as f:
+        val_labels = pickle.load(f)
+    with open(data_dir + f"/processed/synthetic_oscillator/{name}/X_test.pkl", "rb") as f:
+        test_data = pickle.load(f)
+    with open(data_dir + f"/processed/synthetic_oscillator/{name}/y_test.pkl", "rb") as f:
+        test_labels = pickle.load(f)
+
+    if include_time:
+        ts = (T / train_data.shape[1]) * jnp.repeat(
+            jnp.arange(train_data.shape[1])[None, :], train_data.shape[0], axis=0
+        )
+        train_data = jnp.concatenate([ts[:, :, None], train_data], axis=2)
+        ts = (T / val_data.shape[1]) * jnp.repeat(
+            jnp.arange(val_data.shape[1])[None, :], val_data.shape[0], axis=0
+        )
+        val_data = jnp.concatenate([ts[:, :, None], val_data], axis=2)
+        ts = (T / test_data.shape[1]) * jnp.repeat(
+            jnp.arange(test_data.shape[1])[None, :], test_data.shape[0], axis=0
+        )
+        test_data = jnp.concatenate([ts[:, :, None], test_data], axis=2)
+
+    if use_presplit:
+        data = (train_data, val_data, test_data)
+        labels = (train_labels, val_labels, test_labels)
+    else:
+        data = jnp.concatenate((train_data, val_data, test_data), axis=0)
+        labels = jnp.concatenate((train_labels, val_labels, test_labels), axis=0)
+
+    return dataset_generator(
+        name,
+        data,
+        labels,
+        stepsize,
+        depth,
+        include_time,
+        T,
+        use_presplit=use_presplit,
+        key=key,
+    )
+
+
 def create_dataset(
     data_dir,
     name,
@@ -463,6 +527,8 @@ def create_dataset(
 ):
     uea_subfolders = get_subfolders(data_dir + "/processed/UEA")
     toy_subfolders = get_subfolders(data_dir + "/processed/toy")
+    se3_subfolders = get_subfolders(data_dir + "/processed/SE3")
+    synthetic_oscillator_subfolders = get_subfolders(data_dir + "/processed/synthetic_oscillator")
 
     if name in uea_subfolders:
         return create_uea_dataset(
@@ -472,15 +538,17 @@ def create_dataset(
         return create_toy_dataset(
             data_dir, name, stepsize, depth, include_time, T, key=key
         )
+    elif name in se3_subfolders:
+        return create_SE3_dataset(
+            data_dir, name, use_presplit, stepsize, depth, include_time, T, key=key
+        )
+    elif name in synthetic_oscillator_subfolders:
+        return create_synthetic_oscillator_dataset(
+            data_dir, name, use_presplit, stepsize, depth, include_time, T, key=key
+        )
     elif name == "ppg":
         return create_ppg_dataset(
             data_dir, use_presplit, stepsize, depth, include_time, T, key=key
         )
-    elif name in ["pouring", "stirring", "scoopingPepper", "scoopingPowder"]:
-        return create_SE3_dataset(
-            data_dir, name, use_presplit, stepsize, depth, include_time, T, key=key
-        )
-    elif name == "oscillatory":
-        raise NotImplementedError("Oscillatory dataset has not yet been implemented")
     else:
         raise ValueError(f"Dataset {name} not found")
