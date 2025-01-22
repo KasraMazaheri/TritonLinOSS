@@ -16,6 +16,19 @@ def simple_uniform_init(rng, shape, std=1.):
     return weights
 
 
+def map_theta_to_A(thetas, G_diag, steps):
+    A_plus = (4 * jnp.sqrt(steps ** 4 * jnp.cos(thetas) ** (-2) + steps ** 5 * G_diag * jnp.cos(thetas) ** (-2)) \
+        - steps ** 2 * (- 4 - 2 * steps * G_diag - 4 * jnp.tan(thetas) ** 2 - 2 * steps * G_diag * jnp.tan(thetas) ** 2)) \
+        / (2 * steps ** 4 * (1 + jnp.tan(thetas) ** 2))
+    A_minus = (- 4 * jnp.sqrt(steps ** 4 * jnp.cos(thetas) ** (-2) + steps ** 5 * G_diag * jnp.cos(thetas) ** (-2)) \
+        - steps ** 2 * (- 4 - 2 * steps * G_diag - 4 * jnp.tan(thetas) ** 2 - 2 * steps * G_diag * jnp.tan(thetas) ** 2)) \
+        / (2 * steps ** 4 * (1 + jnp.tan(thetas) ** 2))
+
+    A_diag = jnp.where(thetas > jnp.pi / 2, A_plus, A_minus)
+
+    return A_diag
+
+
 class GLU(eqx.Module):
     w1: eqx.nn.Linear
     w2: eqx.nn.Linear
@@ -101,30 +114,6 @@ def make_linoss_imex_recurrence(A_diag, step):
     M_12 = jnp.diag(-1. * step * A_diag)
     M_21 = jnp.diag(step)
     M_22 = jnp.diag(1. - (step ** 2.) * A_diag)
-
-    M = jnp.block([
-        [M_11, M_12],
-        [M_21, M_22]
-    ])
-
-    return M
-
-
-def make_damped_linoss_im_recurrence(A_diag, G_diag, step):
-    """Compute the PxP recurrent matrix M for Damped LinOSS-IM
-    Args:
-        A_diag  (float32):   diagonal state matrix   (P,)
-        G_diag  (float32):   diagonal damping matrix   (P,)
-        step    (float):     discretization time-step $\Delta_t$  (P,)
-    Returns:
-        M    (float32): the recurrent matrix (P, P)
-    """
-    I = jnp.ones_like(A_diag)
-    S = I + step * G_diag + step ** 2 * A_diag
-    M_11 = jnp.diag(1. / S)
-    M_12 = jnp.diag(- step / S * A_diag)
-    M_21 = jnp.diag(step / S)
-    M_22 = jnp.diag(I - step ** 2 / S * A_diag)
 
     M = jnp.block([
         [M_11, M_12],
@@ -221,39 +210,6 @@ def apply_linoss_imex(A_diag, B, input_sequence, step):
     return ys
 
 
-def apply_damped_linoss_im(A_diag, G_diag, B, input_sequence, step):
-    """Compute the LxH output of of Damped LinOSS-IM given an LxH input.
-    Args:
-        A_diag  (float32):   diagonal state matrix   (P,)
-        G_diag  (float32):   diagonal damping matrix (P,)
-        B       (complex64): input matrix            (P, H)
-        input_sequence (float32): input sequence of features    (L, H)
-        step    (float):     discretization time-step $\Delta_t$  (P,)
-    Returns:
-        ys (float32): the SSM states (LinOSS_IM layer pre-output pre-activations)      (L, P)
-    """
-    Bu_elements = jax.vmap(lambda u: B @ u)(input_sequence)
-
-    I = jnp.ones_like(A_diag)
-    S = I + step * G_diag + step ** 2 * A_diag
-    M_11 = 1. / S
-    M_12 = - step / S * A_diag
-    M_21 = step / S
-    M_22 = I - step ** 2 / S * A_diag
-
-    M = jnp.concatenate([M_11, M_12, M_21, M_22])
-    M_elements = M * jnp.ones((input_sequence.shape[0], 4 * A_diag.shape[0]))
-    
-    F1 = step * (1. / S) * Bu_elements
-    F2 = step ** 2 * (1. / S) * Bu_elements
-    F = jnp.hstack((F1, F2))
-
-    _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
-    ys = xs[:, A_diag.shape[0]:]
-
-    return ys
-
-
 def apply_damped_linoss_imex(A_diag, G_diag, B, input_sequence, step):
     """Compute the LxH output of of Damped LinOSS-IMEX given an LxH input.
     Args:
@@ -310,24 +266,18 @@ class LinOSSLayer(eqx.Module):
     ):
         A_key, G_key, B_key, C_key, D_key, step_key, key = jr.split(key, 7)
 
-        self.steps = normal(stddev=0.5)(step_key, (ssm_size,)) # random.uniform(step_key,shape=(ssm_size,))
+        self.steps = normal(stddev=0.5)(step_key, (ssm_size,))
         steps = nn.sigmoid(self.steps)
-        # log_steps = random.uniform(step_key, shape) * (jnp.log(dt_max) - jnp.log(dt_min)) + jnp.log(dt_min)
-        # self.steps = jnp.exp(log_steps)
 
-        # self.G_diag = random.uniform(G_key, shape=(ssm_size,))
         r_max = 1.0
-        mags = random.uniform(G_key, shape=(ssm_size,)) * (r_max - r_min) + r_min
+        mags = jnp.sqrt(random.uniform(G_key, shape=(ssm_size,)) * (r_max ** 2 - r_min ** 2) + r_min ** 2)
         self.G_diag = (1 - mags ** 2) / (steps * mags ** 2)
         G_diag = nn.relu(self.G_diag)
 
-        # self.A_diag = random.uniform(A_key, shape=(ssm_size,))
         theta_min = 0.0
         theta = random.uniform(A_key, shape=(ssm_size,)) * (theta_max - theta_min) + theta_min
-        self.A_diag = (- 4 * jnp.sqrt(steps ** 4 * jnp.cos(theta) ** (-2) + steps ** 5 * G_diag * jnp.cos(theta) ** (-2)) \
-                    - steps ** 2 * (- 4 - 2 * steps * G_diag - 4 * jnp.tan(theta) ** 2 - 2 * steps * G_diag * jnp.tan(theta) ** 2)) \
-                    / (2 * steps ** 4 * (1 + jnp.tan(theta) ** 2))
-        
+        self.A_diag = map_theta_to_A(theta, G_diag, steps)
+
         self.B = simple_uniform_init(B_key, shape=(ssm_size, H, 2), std=1./math.sqrt(H))
         self.C = simple_uniform_init(C_key, shape=(H, ssm_size, 2), std=1./math.sqrt(ssm_size))
         self.D = normal(stddev=1.0)(D_key, (H,))
@@ -351,7 +301,9 @@ class LinOSSLayer(eqx.Module):
 
         if self.discretization == "IM":
             if self.damping:
-                ys = apply_damped_linoss_im(A_diag, G_diag, B_complex, input_sequence, steps)
+                raise NotImplementedError(
+                    "Discretization {} and damping = {} not implemented".format(self.discretization, self.damping)
+                )
             else:
                 ys = apply_linoss_im(A_diag, B_complex, input_sequence, steps)
         elif self.discretization == "IMEX":
@@ -362,7 +314,7 @@ class LinOSSLayer(eqx.Module):
         else:
             raise NotImplementedError(
                 "Discretization {} not implemented".format(self.discretization)
-           )
+            )
 
         # Apply SSM Output Operations Cx + Du
         Cy = jax.vmap(lambda x: (C_complex @ x).real)(ys)
@@ -545,7 +497,9 @@ class LinOSS(eqx.Module):
 
             if self.discretization == "IM":
                 if self.damping:
-                    M = make_damped_linoss_im_recurrence(A_diag, G_diag, steps)
+                    raise NotImplementedError(
+                        "Discretization {} and damping = {} not implemented".format(self.discretization, self.damping)
+                    )
                 else:
                     M = make_linoss_im_recurrence(A_diag, steps)
             elif self.discretization == "IMEX":

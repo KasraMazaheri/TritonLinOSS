@@ -28,9 +28,9 @@ def create_configs(
         damping
     )
 
-    for i, (lr, hd, sd, nb, t, dis, dam, par) in enumerate(combos):
+    for i, (lr, hd, sd, nb, t, dis, dam) in enumerate(combos):
         # I/O
-        in_filename = in_dir / model / (dataset + ".json")
+        in_filename = in_dir / model / dataset / "config_000.json"
         os.makedirs(out_dir / model / dataset , exist_ok=True)
         out_filename = out_dir / model / dataset / f"config_{i:03}.json"
         
