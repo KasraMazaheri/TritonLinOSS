@@ -24,10 +24,15 @@ def sample_configs(
 
         # Sample configurations
         discrete_samples = {key: val[1](random.choice(val[0])) for key, val in discrete_params.items()}
-        continuous_samples = {
-            key: val[1](loguniform.rvs(*val[0])) if key == "lr" else val[1](random.uniform(*val[0])) 
-            for key, val in continuous_params.items()
-        }
+        continuous_samples = {}
+        for key, val in continuous_params.items():
+            if key == "lr":
+                sample = val[1](loguniform.rvs(*val[0]))
+            elif key == "r_min":
+                sample = val[1](np.sqrt(random.uniform() * (val[0][1] ** 2 - val[0][0] ** 2) + val[0][0] ** 2))
+            else:
+                sample = val[1](random.uniform(*val[0]))
+            continuous_samples[key] = sample
 
         # Read/write config
         with open(base_config, "r") as in_file:
@@ -44,25 +49,24 @@ def sample_configs(
 if __name__ == "__main__":
     # Input / output config files
     linoss_dir = get_linoss_directory()
-    out_dir = linoss_dir / "experiment_configs" / "oscillator_experiment"
+    out_dir = linoss_dir / "experiment_configs" / "experiment"
 
     # Models & Datasets
     models = ["LinOSS"]
-    datasets = ["multi_damped_harmonic_oscillator"]
+    datasets = ["synthetic_regression"]
 
     # Enumerate hyperparameter grid (vals, dtype)
     # Continuous
     learning_rates = ([1e-4, 1e-2], float)
-    r_min = ([0.5, 0.9], float)
-    theta_max = ([np.pi/10, np.pi/4], float)
+    r_min = ([0.0, 1.0], float)
     # Discrete
-    hidden_dims = ([16, 64], int)
-    state_dims = ([16, 64], int)
-    blocks = ([2, 4], int)
-    time = ([False, True], str)
+    hidden_dims = ([16, 64, 128], int)
+    state_dims = ([16, 64, 256], int)
+    blocks = ([1], int)
+    time = ([True, False], str)
     # Constant params
-    discretization = (["IM"], str)
-    damping = ([False], bool)
+    discretization = (["IMEX"], str)
+    damping = ([True], bool)
 
     # Number of configurations
     num_samples = 10
@@ -79,7 +83,6 @@ if __name__ == "__main__":
                 continuous_params={
                     "lr": learning_rates,
                     "r_min": r_min,
-                    "theta_max": theta_max,
                 }, 
                 discrete_params={
                     "hidden_dim": hidden_dims, 

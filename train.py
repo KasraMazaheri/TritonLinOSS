@@ -153,20 +153,6 @@ def train_model(
     else:
         raise ValueError(f"Unknown metric: {metric}")
 
-    if os.path.isdir(output_dir):
-        user_input = input(
-            f"Warning: Output directory {output_dir} already exists. Do you want to delete it? (yes/no): "
-        )
-        if user_input.lower() == "yes":
-            shutil.rmtree(output_dir)
-            os.makedirs(output_dir)
-            print(f"Directory {output_dir} has been deleted and recreated.")
-        else:
-            raise ValueError(f"Directory {output_dir} already exists. Exiting.")
-    else:
-        os.makedirs(output_dir)
-        print(f"Directory {output_dir} has been created.")
-
     batchkey, key = jr.split(key, 2)
     opt = optax.adam(learning_rate=lr_scheduler(lr))
     opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
@@ -185,10 +171,12 @@ def train_model(
         all_val_metric = [0.0]
         all_train_metric = [0.0]
         val_metric_for_best_model = [0.0]
+        test_metric = jnp.nan
     elif metric == "mse":
         all_val_metric = [100.0]
         all_train_metric = [100.0]
         val_metric_for_best_model = [100.0]
+        test_metric = jnp.nan
     no_val_improvement = 0
     all_time = []
     start = time.time()
@@ -335,7 +323,6 @@ def create_dataset_model_and_train(
     linoss_discretization,
     damping,
     r_min,
-    theta_max,
     model_args,
     num_steps,
     print_steps,
@@ -370,6 +357,20 @@ def create_dataset_model_and_train(
     output_dir = output_parent_dir + output_str
     results_dir = output_parent_dir + "/results/" + model_directory_name + "/" + dataset_name
 
+    if os.path.isdir(output_dir):
+        user_input = input(
+            f"Warning: Output directory {output_dir} already exists. Do you want to delete it? (yes/no): "
+        )
+        if user_input.lower() == "yes":
+            shutil.rmtree(output_dir)
+            os.makedirs(output_dir)
+            print(f"Directory {output_dir} has been deleted and recreated.")
+        else:
+            raise ValueError(f"Directory {output_dir} already exists. Exiting.")
+    else:
+        os.makedirs(output_dir)
+        print(f"Directory {output_dir} has been created.")
+
     key = jr.PRNGKey(seed)
     datasetkey, modelkey, trainkey, key = jr.split(key, 4)
     print(f"Creating dataset {dataset_name}")
@@ -393,9 +394,7 @@ def create_dataset_model_and_train(
         "scoopingPepper", 
         "scoopingPowder", 
         "stirring", 
-        "ms_damped_harmonic_oscillator",
-        "long_damped_harmonic_oscillator",
-        "multi_damped_harmonic_oscillator"
+        "synthetic_regression",
     ]
 
     print(f"Creating model {model_name}")
@@ -406,13 +405,12 @@ def create_dataset_model_and_train(
         "logsig_depth": logsig_depth,
         "intervals": dataset.intervals,
         "label_dim": dataset.label_dim,
-        "classification": metric == "accuracy",
+        "classification": classification,
         "linear_output": linear_output,
         "output_step": output_step,
         "linoss_discretization": linoss_discretization,
         "damping": damping,
         "r_min": r_min,
-        "theta_max": theta_max,
         **model_args,
         "key": modelkey,
     }

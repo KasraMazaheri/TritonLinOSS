@@ -75,7 +75,6 @@ def create_model(
     linoss_discretization='IM',
     damping=False,
     r_min=0.5,
-    theta_max=0.785,
     *,
     key,
 ):
@@ -210,7 +209,6 @@ def create_model(
             linoss_discretization,
             damping,
             r_min,
-            theta_max,
             key=key,
         )
         state = eqx.nn.State(ssm)

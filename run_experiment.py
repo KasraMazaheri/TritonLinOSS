@@ -58,12 +58,10 @@ def run_experiments(
                 linoss_discretization = None
                 damping = False
                 r_min = None
-                theta_max = None
                 if model_name == "LinOSS":
                     linoss_discretization = data["linoss_discretization"]
                     damping = data["damping"]
                     r_min = data["r_min"]
-                    theta_max = data["theta_max"]
                 use_presplit = data["use_presplit"]
                 T = data["T"]
                 if model_name in ["lru", "S5", "S6", "mamba", "LinOSS"]:
@@ -133,7 +131,6 @@ def run_experiments(
                     "linoss_discretization": linoss_discretization,
                     "damping": damping,
                     "r_min": r_min,
-                    "theta_max": theta_max,
                     "model_args": model_args,
                     "num_steps": num_steps,
                     "print_steps": print_steps,
@@ -166,7 +163,7 @@ if __name__ == "__main__":
 
     model_names = ["LinOSS"]
     dataset_names = ["ppg"]
-    experiment_folder = get_linoss_directory() / "experiment_configs" / "random"
+    experiment_folder = get_linoss_directory() / "experiment_configs" / "grid"
     save_model = False
 
     run_experiments(

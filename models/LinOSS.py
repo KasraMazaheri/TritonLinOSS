@@ -260,7 +260,6 @@ class LinOSSLayer(eqx.Module):
         discretization,
         damping,
         r_min,
-        theta_max,
         *,
         key
     ):
@@ -269,14 +268,17 @@ class LinOSSLayer(eqx.Module):
         self.steps = normal(stddev=0.5)(step_key, (ssm_size,))
         steps = nn.sigmoid(self.steps)
 
-        r_max = 1.0
-        mags = jnp.sqrt(random.uniform(G_key, shape=(ssm_size,)) * (r_max ** 2 - r_min ** 2) + r_min ** 2)
-        self.G_diag = (1 - mags ** 2) / (steps * mags ** 2)
-        G_diag = nn.relu(self.G_diag)
+        if discretization == "IMEX" and damping:
+            r_max = 1.0
+            mags = jnp.sqrt(random.uniform(G_key, shape=(ssm_size,)) * (r_max ** 2 - r_min ** 2) + r_min ** 2)
+            self.G_diag = (1 - mags ** 2) / (steps * mags ** 2)
+            G_diag = nn.relu(self.G_diag)
 
-        theta_min = 0.0
-        theta = random.uniform(A_key, shape=(ssm_size,)) * (theta_max - theta_min) + theta_min
-        self.A_diag = map_theta_to_A(theta, G_diag, steps)
+            theta = random.uniform(A_key, shape=(ssm_size,)) * jnp.pi
+            self.A_diag = map_theta_to_A(theta, G_diag, steps)
+        else:
+            self.G_diag = None
+            self.A_diag = random.uniform(A_key, shape=(ssm_size,))   
 
         self.B = simple_uniform_init(B_key, shape=(ssm_size, H, 2), std=1./math.sqrt(H))
         self.C = simple_uniform_init(C_key, shape=(H, ssm_size, 2), std=1./math.sqrt(ssm_size))
@@ -287,14 +289,6 @@ class LinOSSLayer(eqx.Module):
 
     def __call__(self, input_sequence, save_dir=None):
         steps = nn.sigmoid(self.steps)
-
-        # G_diag = nn.relu(steps / 2 * A_diag - 2 / steps) + nn.relu(self.G_diag)
-        G_diag = nn.relu(self.G_diag)
-
-        # A_diag = nn.relu(self.A_diag)
-        A_boundary_low = (2 + steps * G_diag - 2 * jnp.sqrt(1 + steps * G_diag)) / steps ** 2
-        A_boundary_high = (2 + steps * G_diag + 2 * jnp.sqrt(1 + steps * G_diag)) / steps ** 2
-        A_diag = A_boundary_low + nn.relu(self.A_diag - A_boundary_low) - nn.relu(self.A_diag - A_boundary_high)
         
         B_complex = self.B[..., 0] + 1j * self.B[..., 1]
         C_complex = self.C[..., 0] + 1j * self.C[..., 1]
@@ -305,11 +299,17 @@ class LinOSSLayer(eqx.Module):
                     "Discretization {} and damping = {} not implemented".format(self.discretization, self.damping)
                 )
             else:
+                A_diag = nn.relu(self.A_diag)
                 ys = apply_linoss_im(A_diag, B_complex, input_sequence, steps)
         elif self.discretization == "IMEX":
             if self.damping:
+                G_diag = nn.relu(self.G_diag)
+                A_boundary_low = (2 + steps * G_diag - 2 * jnp.sqrt(1 + steps * G_diag)) / steps ** 2
+                A_boundary_high = (2 + steps * G_diag + 2 * jnp.sqrt(1 + steps * G_diag)) / steps ** 2
+                A_diag = A_boundary_low + nn.relu(self.A_diag - A_boundary_low) - nn.relu(self.A_diag - A_boundary_high)
                 ys = apply_damped_linoss_imex(A_diag, G_diag, B_complex, input_sequence, steps)
             else:
+                A_diag = nn.relu(self.A_diag)
                 ys = apply_linoss_imex(A_diag, B_complex, input_sequence, steps)
         else:
             raise NotImplementedError(
@@ -342,7 +342,6 @@ class LinOSSBlock(eqx.Module):
         discretization,
         damping,
         r_min,
-        theta_max,
         drop_rate=0.05,
         *,
         key
@@ -357,7 +356,6 @@ class LinOSSBlock(eqx.Module):
             discretization,
             damping,
             r_min,
-            theta_max,
             key=ssmkey,
         )
         self.glu = GLU(H, H, key=glukey)
@@ -408,7 +406,6 @@ class LinOSS(eqx.Module):
         discretization,
         damping,
         r_min,
-        theta_max,
         *,
         key
     ):
@@ -424,7 +421,6 @@ class LinOSS(eqx.Module):
                 discretization,
                 damping,
                 r_min,
-                theta_max,
                 key=key,
             )
             for key in block_keys
@@ -487,10 +483,6 @@ class LinOSS(eqx.Module):
             jnp.save(save_dir + f'block_{i}/glu/w2/bias.npy', block.glu.w2.bias)
 
             steps = nn.sigmoid(block.ssm.steps)
-            G_diag = nn.relu(block.ssm.G_diag)
-            A_boundary_low = (2 + steps * G_diag - 2 * jnp.sqrt(1 + steps * G_diag)) / steps ** 2
-            A_boundary_high = (2 + steps * G_diag + 2 * jnp.sqrt(1 + steps * G_diag)) / steps ** 2
-            A_diag = A_boundary_low + nn.relu(block.ssm.A_diag - A_boundary_low) - nn.relu(block.ssm.A_diag - A_boundary_high)
             B_complex = block.ssm.B[..., 0] + 1j * block.ssm.B[..., 1]
             C_complex = block.ssm.C[..., 0] + 1j * block.ssm.C[..., 1]
             D = jnp.diag(block.ssm.D)
@@ -501,11 +493,17 @@ class LinOSS(eqx.Module):
                         "Discretization {} and damping = {} not implemented".format(self.discretization, self.damping)
                     )
                 else:
+                    A_diag = nn.relu(block.ssm.A_diag)
                     M = make_linoss_im_recurrence(A_diag, steps)
             elif self.discretization == "IMEX":
                 if self.damping:
+                    G_diag = nn.relu(block.ssm.G_diag)
+                    A_boundary_low = (2 + steps * G_diag - 2 * jnp.sqrt(1 + steps * G_diag)) / steps ** 2
+                    A_boundary_high = (2 + steps * G_diag + 2 * jnp.sqrt(1 + steps * G_diag)) / steps ** 2
+                    A_diag = A_boundary_low + nn.relu(block.ssm.A_diag - A_boundary_low) - nn.relu(block.ssm.A_diag - A_boundary_high)
                     M = make_damped_linoss_imex_recurrence(A_diag, G_diag, steps)
                 else:
+                    A_diag = nn.relu(block.ssm.A_diag)
                     M = make_linoss_imex_recurrence(A_diag, steps)
             else:
                 raise NotImplementedError(

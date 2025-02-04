@@ -20,12 +20,14 @@
     "use_presplit": true,
     "T": 1,
     "dt0": null,
-    "linoss_discretization": "IM",
+    "linoss_discretization": "IMEX",
     "scale": 1,
     "time": "True",
-    "lr": "0.001",
-    "num_blocks": "6",
-    "hidden_dim": "16",
-    "ssm_dim": "64",
-    "ssm_blocks": "8"
+    "lr": 0.001,
+    "num_blocks": 2,
+    "hidden_dim": 16,
+    "ssm_dim": 16,
+    "ssm_blocks": "8",
+    "damping": true,
+    "r_min": 0.9
 }

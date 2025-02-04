@@ -1,6 +1,7 @@
 import os
 import json
 import itertools
+import numpy as np
 
 from data_dir.project_dir import get_linoss_directory
 
@@ -17,6 +18,7 @@ def create_configs(
     time,
     discretization,
     damping,
+    r_min,
 ):
     combos = itertools.product(
         learning_rates, 
@@ -25,10 +27,11 @@ def create_configs(
         blocks, 
         time, 
         discretization, 
-        damping
+        damping,
+        r_min,
     )
 
-    for i, (lr, hd, sd, nb, t, dis, dam) in enumerate(combos):
+    for i, (lr, hd, sd, nb, t, dis, dam, r) in enumerate(combos):
         # I/O
         in_filename = in_dir / model / dataset / "config_000.json"
         os.makedirs(out_dir / model / dataset , exist_ok=True)
@@ -47,6 +50,7 @@ def create_configs(
         data["time"] = str(t)
         data["linoss_discretization"] = str(dis)
         data["damping"] = bool(dam)
+        data["r_min"] = float(r)
 
         with open(out_filename, "w") as out_file:
             json.dump(data, out_file, indent=4)
@@ -67,9 +71,10 @@ if __name__ == "__main__":
     hidden_dims = [16, 64, 128]
     state_dims = [16, 64, 256]
     blocks = [2, 4, 6]
-    time = [False, True]
+    time = [True, False]
     discretization = ["IMEX"]
     damping = [True]
+    r_min = [0.9]
 
     # Write configuration files
     for dataset in datasets:
@@ -86,4 +91,5 @@ if __name__ == "__main__":
                 time,
                 discretization,
                 damping,
+                r_min,
             )

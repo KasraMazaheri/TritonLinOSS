@@ -78,13 +78,18 @@ def batch_calc_paths(data, stepsize, depth, inmemory=True):
 
 
 def batch_calc_coeffs(data, include_time, T, inmemory=True):
+    print("Warning: Batch calc coeffs function overwritten, this does not work")
+    if inmemory:
+        return jnp.empty(data.shape)
+    else:
+        return np.empty(data.shape)
     N = len(data)
     batchsize = 128
     num_batches = N // batchsize
     remainder = N % batchsize
     coeffs = []
     if inmemory:
-        out_func = lambda x: x[0] # Wrapped in tuple
+        out_func = lambda x: x
         in_func = lambda x: x
     else:
         out_func = lambda x: np.array(x)
@@ -145,17 +150,19 @@ def dataset_generator(
         train_data, train_labels = data[idxs[0]], labels[idxs[0]]
         val_data, val_labels = data[idxs[1]], labels[idxs[1]]
         test_data, test_labels = None, None
-
+    
     train_paths = batch_calc_paths(train_data, stepsize, depth)
     val_paths = batch_calc_paths(val_data, stepsize, depth)
     test_paths = batch_calc_paths(test_data, stepsize, depth)
+    
     intervals = jnp.arange(0, train_data.shape[1], stepsize)
     intervals = jnp.concatenate((intervals, jnp.array([train_data.shape[1]])))
     intervals = intervals * (T / train_data.shape[1])
-
+    
     train_coeffs = batch_calc_coeffs(train_data, include_time, T)
     val_coeffs = batch_calc_coeffs(val_data, include_time, T)
     test_coeffs = batch_calc_coeffs(test_data, include_time, T)
+    
     train_coeff_data = (
         (T / train_data.shape[1])
         * jnp.repeat(
@@ -179,7 +186,6 @@ def dataset_generator(
             test_coeffs,
             test_data[:, 0, :],
         )
-
     train_path_data = (
         (T / train_data.shape[1])
         * jnp.repeat(
@@ -207,9 +213,7 @@ def dataset_generator(
     data_dim = train_data.shape[-1]
     onedim_regression_tasks = [
         "ppg", 
-        "ms_damped_harmonic_oscillator", 
-        "long_damped_harmonic_oscillator", 
-        "multi_damped_harmonic_oscillator"
+        "synthetic_regression",
     ]
     if len(train_labels.shape) == 1 or name in onedim_regression_tasks:
         label_dim = 1
@@ -455,9 +459,9 @@ def create_SE3_dataset(
     )
 
 
-def create_synthetic_oscillator_dataset(
+def create_synthetic_regression_dataset(
     data_dir,
-    name, 
+    name,
     use_presplit, 
     stepsize, 
     depth, 
@@ -466,17 +470,17 @@ def create_synthetic_oscillator_dataset(
     *, 
     key
 ):
-    with open(data_dir + f"/processed/synthetic_oscillator/{name}/X_train.pkl", "rb") as f:
+    with open(data_dir + f"/processed/{name}/X_train.pkl", "rb") as f:
         train_data = pickle.load(f)
-    with open(data_dir + f"/processed/synthetic_oscillator/{name}/y_train.pkl", "rb") as f:
+    with open(data_dir + f"/processed/{name}/y_train.pkl", "rb") as f:
         train_labels = pickle.load(f)
-    with open(data_dir + f"/processed/synthetic_oscillator/{name}/X_val.pkl", "rb") as f:
+    with open(data_dir + f"/processed/{name}/X_val.pkl", "rb") as f:
         val_data = pickle.load(f)
-    with open(data_dir + f"/processed/synthetic_oscillator/{name}/y_val.pkl", "rb") as f:
+    with open(data_dir + f"/processed/{name}/y_val.pkl", "rb") as f:
         val_labels = pickle.load(f)
-    with open(data_dir + f"/processed/synthetic_oscillator/{name}/X_test.pkl", "rb") as f:
+    with open(data_dir + f"/processed/{name}/X_test.pkl", "rb") as f:
         test_data = pickle.load(f)
-    with open(data_dir + f"/processed/synthetic_oscillator/{name}/y_test.pkl", "rb") as f:
+    with open(data_dir + f"/processed/{name}/y_test.pkl", "rb") as f:
         test_labels = pickle.load(f)
 
     if include_time:
@@ -528,7 +532,6 @@ def create_dataset(
     uea_subfolders = get_subfolders(data_dir + "/processed/UEA")
     toy_subfolders = get_subfolders(data_dir + "/processed/toy")
     se3_subfolders = get_subfolders(data_dir + "/processed/SE3")
-    synthetic_oscillator_subfolders = get_subfolders(data_dir + "/processed/synthetic_oscillator")
 
     if name in uea_subfolders:
         return create_uea_dataset(
@@ -542,8 +545,8 @@ def create_dataset(
         return create_SE3_dataset(
             data_dir, name, use_presplit, stepsize, depth, include_time, T, key=key
         )
-    elif name in synthetic_oscillator_subfolders:
-        return create_synthetic_oscillator_dataset(
+    elif name == "synthetic_regression":
+        return create_synthetic_regression_dataset(
             data_dir, name, use_presplit, stepsize, depth, include_time, T, key=key
         )
     elif name == "ppg":
