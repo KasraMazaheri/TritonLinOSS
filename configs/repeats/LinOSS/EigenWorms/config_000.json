@@ -1,0 +1,31 @@
+{
+    "seeds": [
+        2345,
+        3456,
+        4567,
+        5678,
+        6789
+    ],
+    "lr_scheduler": "lambda lr: lr",
+    "num_steps": 100000,
+    "print_steps": 1000,
+    "batch_size": 4,
+    "model_name": "LinOSS",
+    "metric": "accuracy",
+    "classification": true,
+    "dataset_name": "EigenWorms",
+    "use_presplit": false,
+    "T": 1,
+    "dt0": null,
+    "linoss_discretization": "IMEX",
+    "damping": true,
+    "scale": 0,
+    "time": "False",
+    "lr": "0.001",
+    "num_blocks": "2",
+    "hidden_dim": "64",
+    "ssm_dim": "16",
+    "ssm_blocks": "2",
+    "r_min": 0.9,
+    "theta_max": 3.141
+}
