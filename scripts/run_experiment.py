@@ -114,7 +114,7 @@ def parse_config(
         output_step = 1
 
     # Paths
-    data_dir = BASE_DIR / "linoss" / "data"
+    data_dir = BASE_DIR / "data"
     output_parent_dir = BASE_DIR
 
     # Form model arguments

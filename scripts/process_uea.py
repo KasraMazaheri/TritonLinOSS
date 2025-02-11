@@ -1,18 +1,22 @@
 """
-This script processes the UEA datasets and saves the processed data in the data_dir/processed directory.
+This script processes the UEA datasets and saves the processed data
+in the data/processed directory.
 It has been adapted to Jax from https://github.com/jambo6/neuralRDEs
 """
 
 import os
 import pickle
 import warnings
-
+from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from sktime.datasets import load_from_arff_to_dataframe
 from tqdm import tqdm
+
+# linoss/ directory
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def save_pickle(obj, filename):
@@ -105,5 +109,5 @@ def convert_all_files(data_dir):
 
 
 if __name__ == "__main__":
-    data_dir = "./linoss/data_dir"
-    convert_all_files(data_dir)
+    data_dir = BASE_DIR / "data"
+    convert_all_files(str(data_dir))

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from linoss.models.generate_model import create_model
-from linoss.data.datasets import create_dataset
+from linoss.dataloaders.datasets import create_dataset
 
 # linoss/ directory
 BASE_DIR = Path(__file__).resolve().parent.parent

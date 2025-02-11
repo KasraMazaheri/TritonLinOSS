@@ -30,7 +30,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
-from linoss.data.hall_set import HallSet
+from linoss.dataloaders.hall_set import HallSet
 from linoss.models.NeuralCDEs import VectorField
 
 

@@ -29,9 +29,9 @@ import numpy as np
 
 # from tqdm import tqdm
 
-from linoss.data.dataloaders import Dataloader
-from linoss.data.generate_coeffs import calc_coeffs
-from linoss.data.generate_paths import calc_paths
+from linoss.dataloaders.dataloaders import Dataloader
+from linoss.dataloaders.generate_coeffs import calc_coeffs
+from linoss.dataloaders.generate_paths import calc_paths
 
 
 def get_subfolders(folder):

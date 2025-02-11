@@ -1,13 +1,17 @@
 """
-This script processes the PPG_FieldStudy dataset and saves the processed data in the data_dir/processed directory.
+This script processes the PPG_FieldStudy dataset and saves the processed data
+in the data/processed directory.
 """
 
 import os
 import pickle
 import random
-
+from pathlib import Path
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view as swv
+
+# linoss/ directory
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 all_train_input = []
@@ -18,10 +22,10 @@ all_val_output = []
 all_test_output = []
 
 for i in range(1, 16):
-
     print(i)
 
-    with open(f"./linoss/data_dir/raw/PPG_FieldStudy/S{i}/S{i}.pkl", "rb") as f:
+    ppg_file = BASE_DIR / "data" / "raw" / "PPG_FieldStudy" / f"S{i}" / f"S{i}.pkl"
+    with open(ppg_file, "rb") as f:
         data = pickle.load(f, encoding="latin1")
 
     ACC = np.repeat(data["signal"]["wrist"]["ACC"], 2, axis=0)
@@ -109,17 +113,18 @@ train_output = np.concatenate(all_train_output, axis=0)
 val_output = np.concatenate(all_val_output, axis=0)
 test_output = np.concatenate(all_test_output, axis=0)
 
-os.makedirs("./linoss/data_dir/processed/PPG/ppg", exist_ok=True)
+save_dir = BASE_DIR / "data" / "processed" / "PPG" / "ppg"
+os.makedirs(save_dir, exist_ok=True)
 
-with open("./linoss/data_dir/processed/PPG/ppg/X_train.pkl", "wb") as f:
+with open(save_dir / "X_train.pkl", "wb") as f:
     pickle.dump(train_input, f)
-with open("./linoss/data_dir/processed/PPG/ppg/y_train.pkl", "wb") as f:
+with open(save_dir / "y_train.pkl", "wb") as f:
     pickle.dump(train_output, f)
-with open("./linoss/data_dir/processed/PPG/ppg/X_val.pkl", "wb") as f:
+with open(save_dir / "X_val.pkl", "wb") as f:
     pickle.dump(val_input, f)
-with open("./linoss/data_dir/processed/PPG/ppg/y_val.pkl", "wb") as f:
+with open(save_dir / "y_val.pkl", "wb") as f:
     pickle.dump(val_output, f)
-with open("./linoss/data_dir/processed/PPG/ppg/X_test.pkl", "wb") as f:
+with open(save_dir / "X_test.pkl", "wb") as f:
     pickle.dump(test_input, f)
-with open("./linoss/data_dir/processed/PPG/ppg/y_test.pkl", "wb") as f:
+with open(save_dir / "y_test.pkl", "wb") as f:
     pickle.dump(test_output, f)

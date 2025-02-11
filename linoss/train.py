@@ -57,7 +57,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
-from linoss.data.datasets import create_dataset
+from linoss.dataloaders.datasets import create_dataset
 from linoss.models.generate_model import create_model
 
 

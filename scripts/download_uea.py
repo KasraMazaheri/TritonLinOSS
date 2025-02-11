@@ -6,6 +6,10 @@ import os
 import tarfile
 import urllib.request
 import zipfile
+from pathlib import Path
+
+# linoss/ directory
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def download_and_unzip(url, save_dir, zipname):
@@ -22,7 +26,7 @@ def download_and_unzip(url, save_dir, zipname):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    if len(os.listdir(save_dir)) == 0 or True:
+    if len(os.listdir(save_dir)) == 0:
         urllib.request.urlretrieve(url, zipname)
         print("Downloaded data to {}".format(zipname))
         if zipname.split(".")[-1] == "gz":
@@ -36,11 +40,15 @@ def download_and_unzip(url, save_dir, zipname):
 
 
 if __name__ == "__main__":
-    data_dir = "./linoss/data_dir"
+    save_dir = BASE_DIR / "data" / "raw" / "UEA"
     url = (
         "http://www.timeseriesclassification.com/aeon-toolkit/Archives"
         "/Multivariate2018_arff.zip"
     )
-    save_dir = data_dir + "/raw/UEA/"
-    zipname = save_dir + "uea.zip"
-    download_and_unzip(url, save_dir, zipname)
+    zipname = save_dir / "uea.zip"
+
+    download_and_unzip(
+        url,
+        str(save_dir),
+        str(zipname),
+    )
