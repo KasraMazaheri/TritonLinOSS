@@ -1,37 +1,37 @@
 """
-This module defines the `Dataset` class and functions for generating datasets tailored to different model types.
-A `Dataset` object in this module contains three different dataloaders, each providing a specific version of the data
-required by different models:
+This module defines the `Dataset` class and functions for generating datasets
+    tailored to different model types.
 
-- `raw_dataloaders`: Returns the raw time series data, suitable for recurrent neural networks (RNNs) and structured
-  state space models (SSMs).
-- `coeff_dataloaders`: Provides the coefficients of an interpolation of the data, used by Neural Controlled Differential
-  Equations (NCDEs).
-- `path_dataloaders`: Provides the log-signature of the data over intervals, used by Neural Rough Differential Equations
-  (NRDEs) and Log-NCDEs.
+A `Dataset` object in this module contains three different dataloaders,
+    each providing a specific version of the data required by different models:
 
-The module also includes utility functions for processing and generating these datasets, ensuring compatibility with
-different model requirements.
+- `raw_dataloaders`: Returns the raw time series data, suitable for
+    recurrent neural networks (RNNs) and structured state space models (SSMs).
+- `coeff_dataloaders`: Provides the coefficients of an interpolation of the data,
+    used by Neural Controlled Differential Equations (NCDEs).
+- `path_dataloaders`: Provides the log-signature of the data over intervals,
+    used by Neural Rough Differential Equations (NRDEs) and Log-NCDEs.
+
+The module also includes utility functions for processing and generating these datasets,
+    ensuring compatibility with different model requirements.
 """
 
 import os
 import pickle
-from dataclasses import dataclass
-from typing import Dict
-
+import numpy as np
 import jax.numpy as jnp
 import jax.random as jr
-import numpy as np
-
-# from jax.nn import one_hot
-
-# import tensorflow_datasets as tfds
-
-# from tqdm import tqdm
+import jax.nn
+import torchvision
+from dataclasses import dataclass
+from typing import Dict
+from pathlib import Path
 
 from linoss.dataloaders.dataloaders import Dataloader
 from linoss.dataloaders.generate_coeffs import calc_coeffs
 from linoss.dataloaders.generate_paths import calc_paths
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 def get_subfolders(folder):
@@ -489,53 +489,92 @@ def create_synthetic_regression_dataset(
     )
 
 
-# def create_cifar10_dataset(
-#     stepsize,
-#     depth,
-#     include_time,
-#     T,
-#     *,
-#     key
-# ):
-#     # Load CIFAR-10
-#     train_ds, test_ds = tfds.load('cifar10', split=['train', 'test'], as_supervised=True)
+def create_cifar10_dataset(use_presplit, stepsize, depth, include_time, T, *, key):
+    # Load CIFAR-10
+    download_dir = BASE_DIR / "data" / "raw" / "cifar"
+    dataset_train = torchvision.datasets.CIFAR10(
+        download_dir,
+        train=True,
+        download=True,
+        transform=torchvision.transforms.Grayscale(),
+    )
+    dataset_test = torchvision.datasets.CIFAR10(
+        download_dir,
+        train=False,
+        transform=torchvision.transforms.Grayscale(),
+    )
+    num_classes = 10
 
-#     # Convert to numpy arrays first (need to do this for tensorflow datasets)
-#     data = []
-#     labels = []
-#     for image, label in train_ds:
-#         data.append(image.numpy())
-#         labels.append(label.numpy())
-#     for image, label in test_ds:
-#         data.append(image.numpy())
-#         labels.append(label.numpy())
-#     data = jnp.array(data).reshape(-1, 32 * 32, 3)
-#     labels = jnp.array(labels)
+    # CIFAR-10 grayscale normalization (from S5)
+    mean = 122.6 / 255.0
+    std = 61.0 / 255.0
 
-#     # Convert to grayscale and normalize
-#     weights = jnp.array([0.2989, 0.5870, 0.1140])
-#     data = jnp.dot(data, weights)
-#     data = (data - jnp.mean(data)) / jnp.std(data)
+    # Convert to numpy arrays first (need to do this for tensorflow datasets)
+    train_data = []
+    train_labels = []
+    for image, label in dataset_train:
+        train_data.append(np.array(image))
+        train_labels.append(np.array(label))
+    train_data = jnp.array(train_data).reshape(-1, 32 * 32, 1)
+    train_data = (train_data / 255 - mean) / std
+    train_labels = jax.nn.one_hot(jnp.array(train_labels), num_classes)
 
-#     # One-hot encode labels
-#     labels = one_hot(labels, num_classes=10)
+    test_data = []
+    test_labels = []
+    for image, label in dataset_test:
+        test_data.append(np.array(image))
+        test_labels.append(np.array(label))
+    test_data = jnp.array(test_data).reshape(-1, 32 * 32, 1)
+    test_data = (test_data / 255 - mean) / std
+    test_labels = jax.nn.one_hot(jnp.array(test_labels), num_classes)
 
-#     if include_time:
-#         ts = (T / data.shape[1]) * jnp.repeat(
-#             jnp.arange(data.shape[1])[None, :], data.shape[0], axis=0
-#         )
-#         data = jnp.concatenate([ts[:, :, None], data], axis=2)
+    # Split validation
+    val_split = 0.1  # From S5
+    N = len(train_data)
+    permkey, key = jr.split(key)
+    bound = int(N * val_split)
+    idxs_new = jr.permutation(permkey, N)
+    val_data, val_labels = (
+        train_data[idxs_new[:bound]],
+        train_labels[idxs_new[:bound]],
+    )
+    train_data, train_labels = (
+        train_data[idxs_new[bound:]],
+        train_labels[idxs_new[bound:]],
+    )
 
-#     return dataset_generator(
-#         "cifar10",
-#         data,
-#         labels,
-#         stepsize,
-#         depth,
-#         include_time,
-#         T,
-#         key=key,
-#     )
+    if include_time:
+        ts = (T / train_data.shape[1]) * jnp.repeat(
+            jnp.arange(train_data.shape[1])[None, :], train_data.shape[0], axis=0
+        )
+        train_data = jnp.concatenate([ts[:, :, None], train_data], axis=2)
+        ts = (T / val_data.shape[1]) * jnp.repeat(
+            jnp.arange(val_data.shape[1])[None, :], val_data.shape[0], axis=0
+        )
+        val_data = jnp.concatenate([ts[:, :, None], val_data], axis=2)
+        ts = (T / test_data.shape[1]) * jnp.repeat(
+            jnp.arange(test_data.shape[1])[None, :], test_data.shape[0], axis=0
+        )
+        test_data = jnp.concatenate([ts[:, :, None], test_data], axis=2)
+
+    if use_presplit:
+        data = (train_data, val_data, test_data)
+        labels = (train_labels, val_labels, test_labels)
+    else:
+        data = jnp.concatenate((train_data, val_data, test_data), axis=0)
+        labels = jnp.concatenate((train_labels, val_labels, test_labels), axis=0)
+
+    return dataset_generator(
+        "cifar10",
+        data,
+        labels,
+        stepsize,
+        depth,
+        include_time,
+        T,
+        use_presplit=use_presplit,
+        key=key,
+    )
 
 
 def create_dataset(
@@ -582,9 +621,9 @@ def create_dataset(
         return create_ppg_dataset(
             data_dir, use_presplit, stepsize, depth, include_time, T, key=key
         )
-    # elif name == "cifar10":
-    #     return create_cifar10_dataset(
-    #         stepsize, depth, include_time, T, key=key
-    #     )
+    elif name == "cifar10":
+        return create_cifar10_dataset(
+            use_presplit, stepsize, depth, include_time, T, key=key
+        )
     else:
         raise ValueError(f"Dataset {name} not found")

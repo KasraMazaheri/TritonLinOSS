@@ -27,7 +27,7 @@ from typing import List, Dict, Tuple, Optional
 from linoss.train import create_dataset_model_and_train
 
 # linoss/ directory
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 def parse_config(
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_folder",
         type=str,
-        required=True,
+        default="configs/repeats",
         help="path to config folder, relative to base directory linoss/",
     )
     parser.add_argument(
