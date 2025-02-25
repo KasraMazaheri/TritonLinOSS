@@ -209,6 +209,7 @@ def run_experiments(
                         save_dir = (
                             BASE_DIR / "saves" / model_name / dataset_name / str(seed)
                         )
+                        # TODO save idx split
                         os.makedirs(save_dir, exist_ok=True)
                         with open(save_dir / "hyperparameters.pkl", "wb") as f:
                             pickle.dump(hyperparameters, f)

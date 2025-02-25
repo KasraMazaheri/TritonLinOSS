@@ -13,6 +13,7 @@ Arguments for `run_inference.py`:
 
 import os
 import pickle
+import numpy as np
 import jax.numpy as jnp
 import equinox as eqx
 from tqdm import tqdm
@@ -24,7 +25,7 @@ from linoss.models.generate_model import create_model
 from linoss.dataloaders.datasets import create_dataset
 
 # linoss/ directory
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 def load_pickle(filename):
@@ -55,8 +56,8 @@ def run_inference(
     save_dir = BASE_DIR / save_model_folder
     output_dir = save_dir / "inference"
     os.makedirs(output_dir, exist_ok=True)
-    params_dir = save_dir / "params" if save_parameters else None
-    states_dir = save_dir / "states" if save_states else None
+    params_dir = str(save_dir / "params") if save_parameters else None
+    states_dir = str(save_dir / "states") if save_states else None
 
     # Load hyperparameters and create empty model
     with open(save_dir / "hyperparameters.pkl", "rb") as f:
@@ -70,12 +71,12 @@ def run_inference(
 
     # Save model parameters, if requested
     if save_parameters:
-        inference_model.save_params(str(params_dir))
+        inference_model.save_params(params_dir)
 
     # Load dataset arguments and create dataset
     with open(save_dir / "dataset_args.pkl", "rb") as f:
         dataset_args = pickle.load(f)
-    dataset = create_dataset(**dataset_args)
+    dataset = create_dataset(**dataset_args, save_indices_dir=str(output_dir) + "/")
 
     # Run inference by split
     for split, dataloader in dataset.raw_dataloaders.items():
@@ -84,15 +85,19 @@ def run_inference(
         outputs = []
         for x in tqdm(inputs):
             output, _ = inference_model(
-                x, loaded_state, hyperparameters["key"], save_dir=str(states_dir)
+                x, loaded_state, hyperparameters["key"], save_dir=states_dir
             )
             outputs.append(output)
         outputs = jnp.stack(outputs)
 
+        # Only save original data
+        if dataset_args["include_time"]:
+            inputs = inputs[..., 1:]
+
         # Save inputs and outputs
         print(f"Saving inference inputs and outputs to {output_dir}")
-        save_pickle(output_dir / f"inputs_{split}.pkl", inputs)
-        save_pickle(output_dir / f"outputs_{split}.pkl", outputs)
+        save_pickle(output_dir / f"inputs_{split}.pkl", np.array(inputs))
+        save_pickle(output_dir / f"outputs_{split}.pkl", np.array(outputs))
 
 
 if __name__ == "__main__":
@@ -101,7 +106,7 @@ if __name__ == "__main__":
         "--model_save_folder",
         type=str,
         required=True,
-        help="path to model save folder",
+        help="path to model save folder, relative to base directory linoss/",
     )
     parser.add_argument(
         "--save_parameters",

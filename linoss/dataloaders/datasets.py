@@ -130,6 +130,7 @@ def dataset_generator(
     inmemory=True,
     idxs=None,
     use_presplit=False,
+    save_indices_dir=None,
     *,
     key,
 ):
@@ -152,6 +153,13 @@ def dataset_generator(
                 labels[idxs_new[bound1:bound2]],
             )
             test_data, test_labels = data[idxs_new[bound2:]], labels[idxs_new[bound2:]]
+            if save_indices_dir:
+                np.save(save_indices_dir + "indices_train", np.array(idxs_new[:bound1]))
+                np.save(
+                    save_indices_dir + "indices_val",
+                    np.array(idxs_new[bound1:bound2]),
+                )
+                np.save(save_indices_dir + "indices_test", np.array(idxs_new[bound2:]))
     else:
         train_data, train_labels = data[idxs[0]], labels[idxs[0]]
         val_data, val_labels = data[idxs[1]], labels[idxs[1]]
@@ -219,7 +227,7 @@ def dataset_generator(
     data_dim = train_data.shape[-1]
     onedim_regression_tasks = [
         "ppg",
-        "synthetic_regression",
+        "SyntheticRegression",
     ]
     if len(train_labels.shape) == 1 or name in onedim_regression_tasks:
         label_dim = 1
@@ -323,13 +331,16 @@ def create_uea_dataset(
         depth,
         include_time,
         T,
+        save_indices_dir=save_indices_dir,
         idxs=idxs,
         use_presplit=use_presplit,
         key=key,
     )
 
 
-def create_toy_dataset(data_dir, name, stepsize, depth, include_time, T, *, key):
+def create_toy_dataset(
+    data_dir, name, stepsize, depth, include_time, T, save_indices_dir=None, *, key
+):
     with open(data_dir + "/processed/toy/signature/data.pkl", "rb") as f:
         data = pickle.load(f)
     with open(data_dir + "/processed/toy/signature/labels.pkl", "rb") as f:
@@ -353,12 +364,29 @@ def create_toy_dataset(data_dir, name, stepsize, depth, include_time, T, *, key)
         data = jnp.concatenate([ts[:, :, None], data], axis=2)
 
     return dataset_generator(
-        "toy", data, onehot_labels, stepsize, depth, include_time, T, idxs, key=key
+        "toy",
+        data,
+        onehot_labels,
+        stepsize,
+        depth,
+        include_time,
+        T,
+        idxs,
+        save_indices_dir=save_indices_dir,
+        key=key,
     )
 
 
 def create_ppg_dataset(
-    data_dir, use_presplit, stepsize, depth, include_time, T, *, key
+    data_dir,
+    use_presplit,
+    stepsize,
+    depth,
+    include_time,
+    T,
+    save_indices_dir=None,
+    *,
+    key,
 ):
     with open(data_dir + "/processed/PPG/ppg/X_train.pkl", "rb") as f:
         train_data = pickle.load(f)
@@ -402,6 +430,7 @@ def create_ppg_dataset(
         depth,
         include_time,
         T,
+        save_indices_dir=save_indices_dir,
         inmemory=False,
         use_presplit=use_presplit,
         key=key,
@@ -409,7 +438,16 @@ def create_ppg_dataset(
 
 
 def create_SE3_dataset(
-    data_dir, name, use_presplit, stepsize, depth, include_time, T, *, key
+    data_dir,
+    name,
+    use_presplit,
+    stepsize,
+    depth,
+    include_time,
+    T,
+    save_indices_dir=None,
+    *,
+    key,
 ):
     if use_presplit:
         raise NotImplementedError("Pre-split SE3 dataset not currently implemented")
@@ -433,6 +471,7 @@ def create_SE3_dataset(
         depth,
         include_time,
         T,
+        save_indices_dir=save_indices_dir,
         inmemory=False,
         use_presplit=use_presplit,
         key=key,
@@ -440,7 +479,16 @@ def create_SE3_dataset(
 
 
 def create_synthetic_regression_dataset(
-    data_dir, name, use_presplit, stepsize, depth, include_time, T, *, key
+    data_dir,
+    name,
+    use_presplit,
+    stepsize,
+    depth,
+    include_time,
+    T,
+    save_indices_dir=None,
+    *,
+    key,
 ):
     with open(data_dir + f"/processed/{name}/X_train.pkl", "rb") as f:
         train_data = pickle.load(f)
@@ -484,12 +532,15 @@ def create_synthetic_regression_dataset(
         depth,
         include_time,
         T,
+        save_indices_dir=save_indices_dir,
         use_presplit=use_presplit,
         key=key,
     )
 
 
-def create_cifar10_dataset(use_presplit, stepsize, depth, include_time, T, *, key):
+def create_cifar10_dataset(
+    use_presplit, stepsize, depth, include_time, T, save_indices_dir=None, *, key
+):
     # Load CIFAR-10
     download_dir = BASE_DIR / "data" / "raw" / "cifar"
     dataset_train = torchvision.datasets.CIFAR10(
@@ -565,13 +616,14 @@ def create_cifar10_dataset(use_presplit, stepsize, depth, include_time, T, *, ke
         labels = jnp.concatenate((train_labels, val_labels, test_labels), axis=0)
 
     return dataset_generator(
-        "cifar10",
+        "Cifar10",
         data,
         labels,
         stepsize,
         depth,
         include_time,
         T,
+        save_indices_dir=save_indices_dir,
         use_presplit=use_presplit,
         key=key,
     )
@@ -586,6 +638,7 @@ def create_dataset(
     depth,
     include_time,
     T,
+    save_indices_dir=None,
     *,
     key,
 ):
@@ -603,27 +656,64 @@ def create_dataset(
             depth,
             include_time,
             T,
+            save_indices_dir=save_indices_dir,
             key=key,
         )
     elif name[:-1] in toy_subfolders:
         return create_toy_dataset(
-            data_dir, name, stepsize, depth, include_time, T, key=key
+            data_dir,
+            name,
+            stepsize,
+            depth,
+            include_time,
+            T,
+            save_indices_dir=save_indices_dir,
+            key=key,
         )
     elif name in se3_subfolders:
         return create_SE3_dataset(
-            data_dir, name, use_presplit, stepsize, depth, include_time, T, key=key
+            data_dir,
+            name,
+            use_presplit,
+            stepsize,
+            depth,
+            include_time,
+            T,
+            save_indices_dir=save_indices_dir,
+            key=key,
         )
-    elif name == "synthetic_regression":
+    elif name == "SyntheticRegression":
         return create_synthetic_regression_dataset(
-            data_dir, name, use_presplit, stepsize, depth, include_time, T, key=key
+            data_dir,
+            name,
+            use_presplit,
+            stepsize,
+            depth,
+            include_time,
+            T,
+            save_indices_dir=save_indices_dir,
+            key=key,
         )
     elif name == "ppg":
         return create_ppg_dataset(
-            data_dir, use_presplit, stepsize, depth, include_time, T, key=key
+            data_dir,
+            use_presplit,
+            stepsize,
+            depth,
+            include_time,
+            T,
+            save_indices_dir=save_indices_dir,
+            key=key,
         )
-    elif name == "cifar10":
+    elif name == "Cifar10":
         return create_cifar10_dataset(
-            use_presplit, stepsize, depth, include_time, T, key=key
+            use_presplit,
+            stepsize,
+            depth,
+            include_time,
+            T,
+            save_indices_dir=save_indices_dir,
+            key=key,
         )
     else:
         raise ValueError(f"Dataset {name} not found")

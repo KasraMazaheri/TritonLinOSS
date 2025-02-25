@@ -51,11 +51,13 @@ The module also includes the following key functions:
 import os
 import shutil
 import time
+
 import optax
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import jax.tree_util as jtu
 
 from linoss.dataloaders.datasets import create_dataset
 from linoss.models.generate_model import create_model
@@ -188,6 +190,10 @@ def train_model(
     no_val_improvement = 0
     all_time = []
     start = time.time()
+
+    best_model = jtu.tree_map(lambda x: x, model)
+    best_state = jtu.tree_map(lambda x: x, state)
+
     for step, data in zip(
         range(num_steps),
         dataloaders["train"].loop(batch_size, key=batchkey),
@@ -265,6 +271,8 @@ def train_model(
                 else:
                     no_val_improvement = 0
                 if operator_improv(val_metric, best_val(val_metric_for_best_model)):
+                    best_model = jtu.tree_map(lambda x: x, model)
+                    best_state = jtu.tree_map(lambda x: x, state)
                     val_metric_for_best_model.append(val_metric)
                     predictions = []
                     labels = []
@@ -313,7 +321,7 @@ def train_model(
     f.write(str(test_metric * 100.0) + "\n")
     f.close()
 
-    return model, state
+    return best_model, best_state
 
 
 def create_dataset_model_and_train(
@@ -353,12 +361,12 @@ def create_dataset_model_and_train(
         + model_directory_name
         + "/"
         + dataset_name
-        + f"/T_{T:.2f}_time_{include_time}_nsteps_{num_steps}_lr_{lr}"
+        + f"/T_{T:.2f}_time_{include_time}_nsteps_{num_steps}_lr_{lr:.6f}"
     )
     if model_name == "log_ncde" or model_name == "nrde":
         output_str += f"_stepsize_{stepsize:.2f}_depth_{logsig_depth}"
     if model_name == "LinOSS":
-        output_str += f"_r_{r_min}_theta_{theta_max:.2f}"
+        output_str += f"_r_{r_min:.2f}_theta_{theta_max:.2f}"
     for k, v in model_args.items():
         name = str(v)
         if "(" in name:
@@ -376,16 +384,9 @@ def create_dataset_model_and_train(
     )
 
     if os.path.isdir(output_dir):
-        user_input = input(
-            f"Warning: Output directory {output_dir} already exists. \
-                Do you want to delete it? (yes/no): "
-        )
-        if user_input.lower() == "yes":
-            shutil.rmtree(output_dir)
-            os.makedirs(output_dir)
-            print(f"Directory {output_dir} has been deleted and recreated.")
-        else:
-            raise ValueError(f"Directory {output_dir} already exists. Exiting.")
+        shutil.rmtree(output_dir)
+        os.makedirs(output_dir)
+        print(f"Directory {output_dir} has been deleted and recreated.")
     else:
         os.makedirs(output_dir)
         print(f"Directory {output_dir} has been created.")
@@ -409,19 +410,22 @@ def create_dataset_model_and_train(
 
     classification = metric == "accuracy"
     linear_output = dataset_name in [
-        "pouring",
-        "scoopingPepper",
-        "scoopingPowder",
-        "stirring",
-        "synthetic_regression",
+        "Pouring",
+        "ScoopingPepper",
+        "ScoopingPowder",
+        "Stirring",
+        "SyntheticRegression",
     ]
-
     if dataset_name == "ppg":
         theta_max = jnp.pi / 4
         print(
             f"Overwriting theta_max to {theta_max:.3f} for dataset {dataset_name}"
             + " (numerical stability issues)"
         )
+    if dataset_name in ["Pouring", "ScoopingPepper", "ScoopingPowder", "Stirring"]:
+        penalty = 0.0
+    else:
+        penalty = 0.0
 
     print(f"Creating model {model_name}")
     hyperparameters = {
@@ -458,11 +462,6 @@ def create_dataset_model_and_train(
         dataloaders = dataset.coeff_dataloaders
     else:
         dataloaders = dataset.raw_dataloaders
-
-    if dataset_name in ["pouring", "scoopingPepper", "scoopingPowder", "stirring"]:
-        penalty = 1.0
-    else:
-        penalty = 0.0
 
     model, state = train_model(
         dataset_name,
