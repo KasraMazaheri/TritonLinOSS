@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 
 # linoss/ directory
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 def create_configs(
@@ -65,34 +65,27 @@ def create_configs(
 
 if __name__ == "__main__":
     # Script inputs
-    experiment_name = "grid"
+    experiment_name = "mini"
     model_names = ["LinOSS"]
-    dataset_names = [
-        "EigenWorms",
-        "SelfRegulationSCP1",
-        "SelfRegulationSCP2",
-        "EthanolConcentration",
-        "Heartbeat",
-        "MotorImagery",
-    ]
-    learning_rates = [1e-3, 1e-4, 1e-5]
-    hidden_dims = [16, 64, 128]
-    ssm_dims = [16, 64, 256]
-    num_blocks = [2, 4, 6]
-    include_time = [True, False]
+    dataset_names = ["IMDb"]
+    learning_rates = [1e-4, 1e-6]
+    hidden_dims = [64, 128]
+    ssm_dims = [64, 128]
+    num_blocks = [2, 6]
+    include_time = [False]
     discretization = ["IMEX"]
     damping = [True]
-    r_min = [0.9]
+    r_min = [0.0, 0.9]
     theta_max = [np.pi]
 
     # Input / output config files
-    input_dir = BASE_DIR / "configs" / "repeats"
-    output_dir = BASE_DIR / "configs" / experiment_name
+    input_dir = BASE_DIR / "config" / "repeats"
+    output_dir = BASE_DIR / "config" / experiment_name
 
     # Write configuration files
     create_configs(
-        str(input_dir),
-        str(output_dir),
+        input_dir,
+        output_dir,
         model_names,
         dataset_names,
         learning_rates,

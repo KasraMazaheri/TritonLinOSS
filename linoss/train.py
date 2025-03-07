@@ -51,6 +51,7 @@ The module also includes the following key functions:
 import os
 import shutil
 import time
+import warnings
 
 import optax
 import equinox as eqx
@@ -59,8 +60,17 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 
-from linoss.dataloaders.datasets import create_dataset
+from linoss.data_processing.dataset import (
+    StandardDataset,
+    BucketedDataset,
+    CoeffDataset,
+    PathDataset,
+)
+from linoss.data_processing.create_dataset import create_dataset
 from linoss.models.generate_model import create_model
+
+# Ignore warning in loss fn calculation
+warnings.simplefilter("ignore", category=jnp.ComplexWarning)
 
 
 @eqx.filter_jit
@@ -144,7 +154,7 @@ def train_model(
     metric,
     filter_spec,
     state,
-    dataloaders,
+    dataset,
     num_steps,
     print_steps,
     lr,
@@ -196,7 +206,7 @@ def train_model(
 
     for step, data in zip(
         range(num_steps),
-        dataloaders["train"].loop(batch_size, key=batchkey),
+        dataset.dataloaders["train"].loop(batch_size, key=batchkey),
     ):
         stepkey, key = jr.split(key, 2)
         X, y = data
@@ -207,7 +217,7 @@ def train_model(
         if (step + 1) % print_steps == 0:
             predictions = []
             labels = []
-            for data in dataloaders["train"].loop_epoch(batch_size):
+            for data in dataset.dataloaders["train"].loop_epoch(batch_size):
                 stepkey, key = jr.split(key, 2)
                 inference_model = eqx.tree_inference(model, value=True)
                 X, y = data
@@ -232,7 +242,7 @@ def train_model(
                 train_metric = jnp.mean((prediction - y) ** 2)
             predictions = []
             labels = []
-            for data in dataloaders["val"].loop_epoch(batch_size):
+            for data in dataset.dataloaders["val"].loop_epoch(batch_size):
                 stepkey, key = jr.split(key, 2)
                 inference_model = eqx.tree_inference(model, value=True)
                 X, y = data
@@ -276,7 +286,7 @@ def train_model(
                     val_metric_for_best_model.append(val_metric)
                     predictions = []
                     labels = []
-                    for data in dataloaders["test"].loop_epoch(batch_size):
+                    for data in dataset.dataloaders["test"].loop_epoch(batch_size):
                         stepkey, key = jr.split(key, 2)
                         inference_model = eqx.tree_inference(model, value=True)
                         X, y = data
@@ -349,6 +359,10 @@ def create_dataset_model_and_train(
     batch_size,
     output_parent_dir,
 ):
+    key = jr.PRNGKey(seed)
+    datasetkey, modelkey, trainkey, key = jr.split(key, 4)
+
+    # Form output directory name
     if model_name == "LinOSS":
         model_directory_name = model_name + "_" + linoss_discretization
         if damping:
@@ -383,6 +397,7 @@ def create_dataset_model_and_train(
         output_parent_dir + "/results/" + model_directory_name + "/" + dataset_name
     )
 
+    # Delete if it already exists
     if os.path.isdir(output_dir):
         shutil.rmtree(output_dir)
         os.makedirs(output_dir)
@@ -391,24 +406,26 @@ def create_dataset_model_and_train(
         os.makedirs(output_dir)
         print(f"Directory {output_dir} has been created.")
 
-    key = jr.PRNGKey(seed)
-    datasetkey, modelkey, trainkey, key = jr.split(key, 4)
-    print(f"Creating dataset {dataset_name}")
-
-    dataset_args = {
-        "data_dir": data_dir,
-        "name": dataset_name,
-        "stepsize": stepsize,
-        "depth": logsig_depth,
-        "include_time": include_time,
-        "T": T,
-        "use_idxs": False,
-        "use_presplit": use_presplit,
-        "key": datasetkey,
-    }
-    dataset = create_dataset(**dataset_args)
-
-    classification = metric == "accuracy"
+    # Hardcoded properties
+    if model_name in [
+        "LinOSS",
+        "lru",
+        "S5",
+        "rnn_linear",
+        "rnn_gru",
+        "rnn_lstm",
+        "rnn_mlp",
+    ]:
+        if dataset_name == "IMDb":
+            dataset_type = BucketedDataset
+        else:
+            dataset_type = StandardDataset
+    elif model_name in ["ncde"]:
+        dataset_type = CoeffDataset
+    elif model_name in ["nrde", "log_ncde"]:
+        dataset_type = PathDataset
+    else:
+        raise ValueError(f"Model name {model_name} not implemented")
     linear_output = dataset_name in [
         "Pouring",
         "ScoopingPepper",
@@ -422,20 +439,33 @@ def create_dataset_model_and_train(
             f"Overwriting theta_max to {theta_max:.3f} for dataset {dataset_name}"
             + " (numerical stability issues)"
         )
-    if dataset_name in ["Pouring", "ScoopingPepper", "ScoopingPowder", "Stirring"]:
-        penalty = 0.0
-    else:
-        penalty = 0.0
+    penalty = 0.0
+    # if dataset_name in ["Pouring", "ScoopingPepper", "ScoopingPowder", "Stirring"]:
+    #     penalty = 1.0
+
+    dataset_args = {
+        "name": dataset_name,
+        "data_dir": data_dir,
+        "dataset_type": dataset_type,
+        "task_type": "classification" if metric == "accuracy" else "regression",
+        "time_duration": T if include_time else None,
+        "use_presplit": use_presplit,
+        "stepsize": stepsize,
+        "depth": logsig_depth,
+        "key": datasetkey,
+    }
+    print(f"Creating dataset {dataset_name}")
+    dataset = create_dataset(**dataset_args)
 
     print(f"Creating model {model_name}")
     hyperparameters = {
         "model_name": model_name,
         "data_dim": dataset.data_dim,
-        "logsig_dim": dataset.logsig_dim,
-        "logsig_depth": logsig_depth,
-        "intervals": dataset.intervals,
         "label_dim": dataset.label_dim,
-        "classification": classification,
+        "logsig_dim": dataset.logsig_dim if hasattr(dataset, "logsig_dim") else None,
+        "intervals": dataset.intervals if hasattr(dataset, "intervals") else None,
+        "logsig_depth": logsig_depth,
+        "classification": metric == "accuracy",
         "linear_output": linear_output,
         "output_step": output_step,
         "linoss_discretization": linoss_discretization,
@@ -449,7 +479,6 @@ def create_dataset_model_and_train(
 
     filter_spec = jax.tree_util.tree_map(lambda _: True, model)
     if model_name == "nrde" or model_name == "log_ncde":
-        dataloaders = dataset.path_dataloaders
         if model_name == "log_ncde":
             where = lambda model: (model.intervals, model.pairs)
             filter_spec = eqx.tree_at(
@@ -458,10 +487,6 @@ def create_dataset_model_and_train(
         elif model_name == "nrde":
             where = lambda model: (model.intervals,)
             filter_spec = eqx.tree_at(where, filter_spec, replace=(False,))
-    elif model_name == "ncde":
-        dataloaders = dataset.coeff_dataloaders
-    else:
-        dataloaders = dataset.raw_dataloaders
 
     model, state = train_model(
         dataset_name,
@@ -469,7 +494,7 @@ def create_dataset_model_and_train(
         metric,
         filter_spec,
         state,
-        dataloaders,
+        dataset,
         num_steps,
         print_steps,
         lr,

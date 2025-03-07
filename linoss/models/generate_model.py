@@ -65,11 +65,11 @@ from linoss.models.LinOSS import LinOSS
 def create_model(
     model_name,
     data_dim,
-    logsig_dim,
-    logsig_depth,
-    intervals,
     label_dim,
     hidden_dim,
+    logsig_depth=None,
+    logsig_dim=None,
+    intervals=None,
     num_blocks=None,
     vf_depth=None,
     vf_width=None,
@@ -94,6 +94,8 @@ def create_model(
     cellkey, outputkey = jr.split(key, 2)
 
     if model_name == "log_ncde":
+        if logsig_depth is None or intervals is None:
+            raise ValueError("Must specify logsig_depth and intervals for a Log-NCDE.")
         if vf_width is None or vf_depth is None:
             raise ValueError("Must specify vf_width and vf_depth for a Log-NCDE.")
         return (
