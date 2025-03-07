@@ -77,10 +77,10 @@ def binary_operator(q_i, q_j):
     jB_ = A_j[1 * N : 2 * N]
     jC_ = A_j[2 * N : 3 * N]
     jD_ = A_j[3 * N : 4 * N]
-    A_new = iA_ * jA_ + iB_ * jC_
-    B_new = iA_ * jB_ + iB_ * jD_
-    C_new = iC_ * jA_ + iD_ * jC_
-    D_new = iC_ * jB_ + iD_ * jD_
+    A_new = jA_ * iA_ + jB_ * iC_
+    B_new = jA_ * iB_ + jB_ * iD_
+    C_new = jC_ * iA_ + jD_ * iC_
+    D_new = jC_ * iB_ + jD_ * iD_
     Anew = jnp.concatenate([A_new, B_new, C_new, D_new])
 
     b_i1 = b_i[0:N]
