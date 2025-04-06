@@ -57,7 +57,7 @@ class LRULayer(eqx.Module):
     D: jnp.ndarray
     gamma_log: jnp.ndarray
 
-    def __init__(self, N, H, r_min=0, r_max=1, max_phase=6.28, *, key):
+    def __init__(self, N, H, r_min=0.9, r_max=1, max_phase=6.28, *, key):
         u1_key, u2_key, B_re_key, B_im_key, C_re_key, C_im_key, D_key = jr.split(key, 7)
 
         # N: state dimension, H: model dimension
@@ -142,6 +142,7 @@ class LRU(eqx.Module):
     blocks: List[LRUBlock]
     linear_layer: eqx.nn.Linear
     classification: bool
+    linear_output: bool
     output_step: int
     stateful: bool = True
     nondeterministic: bool = True
@@ -155,6 +156,7 @@ class LRU(eqx.Module):
         H,
         output_dim,
         classification,
+        linear_output,
         output_step,
         r_min=0,
         r_max=1,
@@ -173,6 +175,7 @@ class LRU(eqx.Module):
         ]
         self.linear_layer = eqx.nn.Linear(H, output_dim, key=linear_layer_key)
         self.classification = classification
+        self.linear_output = linear_output
         self.output_step = output_step
 
     def __call__(self, x, state, key, save_dir=None):
@@ -198,9 +201,11 @@ class LRU(eqx.Module):
             x = jax.nn.softmax(self.linear_layer(x), axis=0)
         else:
             x = x[self.output_step - 1 :: self.output_step]
+            x = jax.vmap(self.linear_layer)(x)
             if save_dir is not None:
                 jnp.save(save_dir + "/output.npy", jax.vmap(self.linear_layer)(x))
-            x = jax.nn.tanh(jax.vmap(self.linear_layer)(x))
+            if not self.linear_output:
+                x = jax.nn.tanh(x)
 
         return x, state
 

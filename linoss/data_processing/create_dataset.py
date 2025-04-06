@@ -63,7 +63,7 @@ def get_subfolders(folder):
 def split(data, bounds: list):
     assert all([b < 1 for b in bounds])
     n = len(data)
-    bounds = [0] + [int(n * b) for b in bounds] + [len(data)]
+    bounds = [0] + [int(n * b) for b in bounds] + [n]
     split_data = [data[bounds[i] : bounds[i + 1]] for i in range(len(bounds) - 1)]
     return tuple(split_data)
 
@@ -148,23 +148,25 @@ class DatasetLoader(ABC):
         train_labels, val_labels, test_labels = labels
 
         permutation_key, key = jr.split(key)
-        idxs = jr.permutation(permutation_key, len(data)).tolist()
-        if isinstance(train_data, jnp.ndarray):
+        idxs = jr.permutation(
+            permutation_key, len(train_data) + len(val_data) + len(test_data)
+        )
+        if isinstance(train_data, jnp.ndarray) or isinstance(train_data, np.ndarray):
             full_data = jnp.concatenate((train_data, val_data, test_data), axis=0)
             shuffled_data = full_data[idxs]
         else:
             full_data = train_data + val_data + test_data
-            shuffled_data = [full_data[i] for i in idxs]
-        if isinstance(train_labels, jnp.ndarray):
+            shuffled_data = [full_data[i] for i in idxs.tolist()]
+        if isinstance(train_labels, jnp.ndarray) or isinstance(train_labels, np.ndarray):
             full_labels = jnp.concatenate(
                 (train_labels, val_labels, test_labels), axis=0
             )
             shuffled_labels = full_labels[idxs]
         else:
             full_labels = train_labels + val_labels + test_labels
-            shuffled_labels = [full_labels[i] for i in idxs]
+            shuffled_labels = [full_labels[i] for i in idxs.tolist()]
 
-        bounds = [1 - val_proportion - test_proportion, 1 - test_proportion]
+        bounds = [1.0 - val_proportion - test_proportion, 1.0 - test_proportion]
         data = split(shuffled_data, bounds)
         labels = split(shuffled_labels, bounds)
 
@@ -190,11 +192,17 @@ class DatasetLoader(ABC):
         else:
             num_timesteps = train_data.shape[1]
             time = jnp.linspace(0, time_duration, num=num_timesteps, endpoint=False)
-            train_time = jnp.repeat(time, len(train_data), axis=0)[..., np.newaxis]
+            train_time = jnp.repeat(time[np.newaxis, ...], len(train_data), axis=0)[
+                ..., np.newaxis
+            ]
             train_data = jnp.concatenate((train_time, train_data), axis=2)
-            val_time = jnp.repeat(time, len(val_data), axis=0)[..., np.newaxis]
+            val_time = jnp.repeat(time[np.newaxis, ...], len(val_data), axis=0)[
+                ..., np.newaxis
+            ]
             val_data = jnp.concatenate((val_time, val_data), axis=2)
-            test_time = jnp.repeat(time, len(test_data), axis=0)[..., np.newaxis]
+            test_time = jnp.repeat(time[np.newaxis, ...], len(test_data), axis=0)[
+                ..., np.newaxis
+            ]
             test_data = jnp.concatenate((test_time, test_data), axis=2)
 
         return (train_data, val_data, test_data)
@@ -213,7 +221,7 @@ class DatasetLoader(ABC):
             else:
                 label_dim = len(train_labels[0])
         else:
-            label_dim = train_data[0].shape[-1]
+            label_dim = train_labels[0].shape[-1]
 
         return data_dim, label_dim
 
@@ -237,7 +245,7 @@ class DatasetLoader(ABC):
             data, labels = self._shuffle(data, labels, shuffle_key)
 
         if time_duration is not None:
-            self._append_time(data, time_duration)
+            data = self._append_time(data, time_duration)
 
         data_dim, label_dim = self._calculate_dimension(data, labels)
 
@@ -262,23 +270,18 @@ class DatasetLoader(ABC):
 
 class UEALoader(DatasetLoader):
     def _load_and_process_data(self):
-        with open(self.data_dir + f"/processed/UEA/{self.name}/X_train.pkl", "rb") as f:
-            train_data = pickle.load(f)
-        with open(self.data_dir + f"/processed/UEA/{self.name}/y_train.pkl", "rb") as f:
-            train_labels = pickle.load(f)
-        with open(self.data_dir + f"/processed/UEA/{self.name}/X_val.pkl", "rb") as f:
-            val_data = pickle.load(f)
-        with open(self.data_dir + f"/processed/UEA/{self.name}/y_val.pkl", "rb") as f:
-            val_labels = pickle.load(f)
-        with open(self.data_dir + f"/processed/UEA/{self.name}/X_test.pkl", "rb") as f:
-            test_data = pickle.load(f)
-        with open(self.data_dir + f"/processed/UEA/{self.name}/y_test.pkl", "rb") as f:
-            test_labels = pickle.load(f)
+        with open(self.data_dir + f"/processed/UEA/{self.name}/data.pkl", "rb") as f:
+            data = pickle.load(f)
+        with open(self.data_dir + f"/processed/UEA/{self.name}/labels.pkl", "rb") as f:
+            labels = pickle.load(f)
+        onehot_labels = jnp.zeros((len(labels), len(jnp.unique(labels))))
+        onehot_labels = onehot_labels.at[jnp.arange(len(labels)), labels].set(1)
 
-        data = (train_data, val_data, test_data)
-        labels = (train_labels, val_labels, test_labels)
+        bounds = [0.7, 0.85]
+        split_data = split(data, bounds)
+        split_labels = split(onehot_labels, bounds)
 
-        return data, labels
+        return split_data, split_labels
 
 
 class PPGLoader(DatasetLoader):

@@ -12,6 +12,7 @@ Arguments for `run_inference.py`:
 """
 
 import os
+import sys
 import pickle
 import numpy as np
 import jax.numpy as jnp
@@ -21,10 +22,11 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.append(str(BASE_DIR))
+
 from linoss.models.generate_model import create_model
 from linoss.data_processing.create_dataset import create_dataset
-
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 def load_pickle(filename):
@@ -75,10 +77,10 @@ def run_inference(
     # Load dataset arguments and create dataset
     with open(save_dir / "dataset_args.pkl", "rb") as f:
         dataset_args = pickle.load(f)
-    dataset = create_dataset(**dataset_args, save_indices_dir=str(output_dir) + "/")
+    dataset = create_dataset(**dataset_args)
 
     # Run inference by split
-    for split, dataloader in dataset.raw_dataloaders.items():
+    for split, dataloader in dataset.dataloaders.items():
         print(f"Running inference on split {split}")
         inputs = jnp.array(dataloader.data)
         outputs = []
@@ -90,7 +92,7 @@ def run_inference(
         outputs = jnp.stack(outputs)
 
         # Only save original data
-        if dataset_args["include_time"]:
+        if dataset_args["time_duration"] is not None:
             inputs = inputs[..., 1:]
 
         # Save inputs and outputs

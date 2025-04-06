@@ -15,6 +15,7 @@ Arguments for `run_experiments.py`:
 """
 
 import os
+import sys
 import json
 import diffrax
 import glob
@@ -24,10 +25,11 @@ import argparse
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
-from linoss.train import create_dataset_model_and_train
-
 # linoss/ directory
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.append(str(BASE_DIR))
+
+from linoss.train import create_dataset_model_and_train
 
 
 def parse_config(
@@ -68,8 +70,8 @@ def parse_config(
     if model_name == "LinOSS":
         linoss_discretization = data["linoss_discretization"]
         damping = data["damping"]
-        r_min = data["r_min"]
-        theta_max = data["theta_max"]
+        r_min = data.get("r_min", 0)
+        theta_max = data.get("theta_max", 3.1415)
     else:
         linoss_discretization = None
         damping = False
@@ -237,7 +239,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config_folder",
         type=str,
-        default="configs/repeats",
+        default="config/repeats",
         help="path to config folder, relative to base directory linoss/",
     )
     parser.add_argument(

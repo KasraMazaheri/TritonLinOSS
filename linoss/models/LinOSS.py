@@ -9,6 +9,7 @@ from jax import nn
 from jax.nn.initializers import normal
 import math
 from jax import random
+import numpy as np
 
 from linoss.models.LRU import GLU
 
@@ -450,7 +451,7 @@ class LinOSS(eqx.Module):
         self.discretization = discretization
         self.damping = damping
 
-    def __call__(self, x, state, key, save_dir=None):
+    def __call__(self, x, state, key, save_dir=None, save_params_dir=None):
         """Compute LinOSS."""
         dropkeys = jr.split(key, len(self.blocks))
         x = jax.vmap(self.linear_encoder)(x)
@@ -479,6 +480,9 @@ class LinOSS(eqx.Module):
                 jnp.save(save_dir + "/output.npy", x)
             if not self.linear_output:
                 x = jax.nn.tanh(x)
+
+        if save_params_dir is not None:
+            self.save_params(save_params_dir)
 
         return x, state
 
