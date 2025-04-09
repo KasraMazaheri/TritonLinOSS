@@ -194,6 +194,7 @@ def create_model(
             hidden_dim,
             label_dim,
             classification,
+            linear_output,
             output_step,
             "lecun_normal",
             False,

@@ -460,6 +460,7 @@ class S5(eqx.Module):
     blocks: List[S5Block]
     linear_layer: eqx.nn.Linear
     classification: bool
+    linear_output: bool
     output_step: int
     discretization: str
     stateful: bool = True
@@ -475,6 +476,7 @@ class S5(eqx.Module):
         H,
         output_dim,
         classification,
+        linear_output,
         output_step,
         C_init,
         conj_sym,
@@ -509,6 +511,7 @@ class S5(eqx.Module):
         ]
         self.linear_layer = eqx.nn.Linear(H, output_dim, key=linear_layer_key)
         self.classification = classification
+        self.linear_output = linear_output
         self.output_step = output_step
         self.discretization = discretization
 
@@ -538,7 +541,9 @@ class S5(eqx.Module):
             x = x[self.output_step - 1 :: self.output_step]
             if save_dir is not None:
                 jnp.save(save_dir + "/output.npy", jax.vmap(self.linear_layer)(x))
-            x = jax.nn.tanh(jax.vmap(self.linear_layer)(x))
+            x = jax.vmap(self.linear_layer)(x)
+            if not self.linear_layer:
+                x = jax.nn.tanh(x)
 
         return x, state
 

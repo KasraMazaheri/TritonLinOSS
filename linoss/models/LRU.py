@@ -201,9 +201,9 @@ class LRU(eqx.Module):
             x = jax.nn.softmax(self.linear_layer(x), axis=0)
         else:
             x = x[self.output_step - 1 :: self.output_step]
-            x = jax.vmap(self.linear_layer)(x)
             if save_dir is not None:
                 jnp.save(save_dir + "/output.npy", jax.vmap(self.linear_layer)(x))
+            x = jax.vmap(self.linear_layer)(x)
             if not self.linear_output:
                 x = jax.nn.tanh(x)
 
