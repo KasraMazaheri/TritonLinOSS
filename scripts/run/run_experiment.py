@@ -60,11 +60,10 @@ def parse_config(
     batch_size = data["batch_size"]
     metric = data["metric"]
     use_presplit = data["use_presplit"]
-    T = data["T"]
-    scale = data["scale"]
     lr = float(data["lr"])
     include_time = data["time"].lower() == "true"
     hidden_dim = int(data["hidden_dim"])
+    T = float(data["T"])
 
     # Model-specific arguments
     if model_name == "LinOSS":
@@ -77,14 +76,31 @@ def parse_config(
         damping = False
         r_min = None
         theta_max = None
-    if model_name in ["lru", "S5", "LinOSS"]:
-        dt0 = None
-    else:
-        dt0 = float(data["dt0"])
+
     if model_name == "S5":
         ssm_blocks = int(data["ssm_blocks"])
     else:
         ssm_blocks = None
+
+    if model_name in [
+        "lru",
+        "S5",
+        "LinOSS",
+        "rnn_lstm",
+        "rnn_gru",
+        "rnn_mlp",
+        "rnn_linear",
+    ]:
+        ssm_dim = int(data["ssm_dim"])
+        num_blocks = int(data["num_blocks"])
+        scale = None
+        dt0 = None
+    else:
+        ssm_dim = None
+        num_blocks = None
+        dt0 = float(data["dt0"])
+        scale = data["scale"]
+
     if model_name in ["log_ncde", "nrde", "ncde"]:
         vf_depth = int(data["vf_depth"])
         vf_width = int(data["vf_width"])
@@ -98,16 +114,12 @@ def parse_config(
             lambd = float(data["lambd"])
         else:
             lambd = None
-        ssm_dim = None
-        num_blocks = None
     else:
         vf_depth = None
         vf_width = None
         logsig_depth = 1
         stepsize = 1
         lambd = None
-        ssm_dim = int(data["ssm_dim"])
-        num_blocks = int(data["num_blocks"])
 
     # Dataset-specific arguments
     if dataset_name == "ppg":

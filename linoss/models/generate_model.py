@@ -224,17 +224,25 @@ def create_model(
         )
         state = eqx.nn.State(ssm)
         return ssm, state
-    elif model_name == "rnn_linear":
-        cell = LinearCell(data_dim, hidden_dim, key=cellkey)
-    elif model_name == "rnn_gru":
-        cell = GRUCell(data_dim, hidden_dim, key=cellkey)
-    elif model_name == "rnn_lstm":
-        cell = LSTMCell(data_dim, hidden_dim, key=cellkey)
-    elif model_name == "rnn_mlp":
-        if vf_width is None or vf_depth is None:
-            raise ValueError("Must specify vf_width and vf_depth for MLP cell.")
-        cell = MLPCell(data_dim, hidden_dim, vf_depth, vf_width, key=cellkey)
+    elif model_name in ["rnn_linear", "rnn_gru", "rnn_lstm", "rnn_mlp"]:
+        if model_name == "rnn_mlp":
+            if vf_width is None or vf_depth is None:
+                raise ValueError("Must specify vf_width and vf_depth for MLP cell.")
+        rnn = RNN(
+            model_name,
+            num_blocks,
+            data_dim,
+            ssm_dim,
+            hidden_dim,
+            label_dim,
+            classification,
+            output_step,
+            linear_output,
+            vf_depth=vf_depth,
+            vf_width=vf_width,
+            key=key,
+        )
+        state = eqx.nn.State(rnn)
+        return rnn, state
     else:
         raise ValueError(f"Unknown model name: {model_name}")
-
-    return RNN(cell, hidden_dim, label_dim, classification, output_step, key=key), None

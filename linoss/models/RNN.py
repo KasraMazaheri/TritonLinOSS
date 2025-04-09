@@ -28,20 +28,23 @@ sequence of outputs for regression.
 """
 
 import abc
+from typing import List
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.random as jr
+
+from linoss.models.LRU import GLU
 
 
 class _AbstractRNNCell(eqx.Module):
     """Abstract RNN Cell class."""
 
     cell: eqx.Module
-    hidden_size: int
 
     @abc.abstractmethod
-    def __init__(self, data_dim, hidden_dim, *, key):
+    def __init__(self, data_dim, hidden_dim, depth, width, *, key):
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -51,88 +54,171 @@ class _AbstractRNNCell(eqx.Module):
 
 class LinearCell(_AbstractRNNCell):
     cell: eqx.nn.Linear
-    hidden_size: int
 
-    def __init__(self, data_dim, hidden_dim, *, key):
+    def __init__(self, data_dim, hidden_dim, depth, width, *, key):
         self.cell = eqx.nn.Linear(data_dim + hidden_dim, hidden_dim, key=key)
-        self.hidden_size = hidden_dim
 
-    def __call__(self, state, input):
-        return self.cell(jnp.concatenate([state, input]))
+    def __call__(self, x):
+        hidden = jnp.zeros((self.cell.hidden_size,))
+
+        scan_fn = lambda state, input: (
+            self.cell(jnp.concatenate([state, input])),
+            self.cell(jnp.concatenate([state, input])),
+        )
+        _, all_states = jax.lax.scan(scan_fn, hidden, x)
+
+        return all_states
 
 
 class GRUCell(_AbstractRNNCell):
     cell: eqx.nn.GRUCell
-    hidden_size: int
 
-    def __init__(self, data_dim, hidden_dim, *, key):
+    def __init__(self, data_dim, hidden_dim, depth, width, *, key):
         self.cell = eqx.nn.GRUCell(data_dim, hidden_dim, key=key)
-        self.hidden_size = hidden_dim
 
-    def __call__(self, state, input):
-        return self.cell(input, state)
+    def __call__(self, x):
+        hidden = jnp.zeros((self.cell.hidden_size,))
+
+        scan_fn = lambda state, input: (
+            self.cell(input, state),
+            self.cell(input, state),
+        )
+        _, all_states = jax.lax.scan(scan_fn, hidden, x)
+
+        return all_states
 
 
 class LSTMCell(_AbstractRNNCell):
     cell: eqx.nn.LSTMCell
-    hidden_size: int
 
-    def __init__(self, data_dim, hidden_dim, *, key):
+    def __init__(self, data_dim, hidden_dim, depth, width, *, key):
         self.cell = eqx.nn.LSTMCell(data_dim, hidden_dim, key=key)
-        self.hidden_size = hidden_dim
 
-    def __call__(self, state, input):
-        return self.cell(input, state)
+    def __call__(self, x):
+        hidden = jnp.zeros((self.cell.hidden_size,))
+        hidden = (hidden,) * 2
+
+        scan_fn = lambda state, input: (
+            self.cell(input, state),
+            self.cell(input, state),
+        )
+        _, all_states = jax.lax.scan(scan_fn, hidden, x)
+
+        return all_states[0]  # LSTM specific
 
 
 class MLPCell(_AbstractRNNCell):
     cell: eqx.nn.MLP
-    hidden_size: int
 
     def __init__(self, data_dim, hidden_dim, depth, width, *, key):
         self.cell = eqx.nn.MLP(data_dim + hidden_dim, hidden_dim, width, depth, key=key)
-        self.hidden_size = hidden_dim
 
-    def __call__(self, state, input):
-        return self.cell(jnp.concatenate([state, input]))
+    def __call__(self, x):
+        hidden = jnp.zeros((self.cell.hidden_size,))
+
+        scan_fn = lambda state, input: (
+            self.cell(jnp.concatenate([state, input])),
+            self.cell(jnp.concatenate([state, input])),
+        )
+        _, all_states = jax.lax.scan(scan_fn, hidden, x)
+
+        return all_states
+
+
+class RNNBlock(eqx.Module):
+
+    norm: eqx.nn.BatchNorm
+    cell: _AbstractRNNCell
+    glu: GLU
+    drop: eqx.nn.Dropout
+
+    def __init__(
+        self, cell_type, rnn_dim, hidden_dim, vf_depth, vf_width, drop_rate=0.1, *, key
+    ):
+        cellkey, glukey = jr.split(key, 2)
+        self.norm = eqx.nn.BatchNorm(
+            input_size=hidden_dim, axis_name="batch", channelwise_affine=False
+        )
+        self.cell = cell_type(hidden_dim, rnn_dim, vf_depth, vf_width, key=cellkey)
+        self.glu = GLU(rnn_dim, hidden_dim, key=glukey)
+        self.drop = eqx.nn.Dropout(p=drop_rate)
+
+    def __call__(self, x, state, *, key):
+        dropkey1, dropkey2 = jr.split(key, 2)
+        skip = x
+        x, state = self.norm(x.T, state)
+        x = x.T
+        x = self.cell(x)
+        x = self.drop(jax.nn.gelu(x), key=dropkey1)
+        x = jax.vmap(self.glu)(x)
+        x = self.drop(x, key=dropkey2)
+        x = skip + x
+
+        return x, state
 
 
 class RNN(eqx.Module):
-    cell: _AbstractRNNCell
+    input_layer: eqx.nn.Linear
+    blocks: List[RNNBlock]
     output_layer: eqx.nn.Linear
-    hidden_dim: int
     classification: bool
-    stateful: bool = False
-    nondeterministic: bool = False
-    lip2: bool = False
+    linear_output: bool
     output_step: int
+    stateful: bool = True
+    nondeterministic: bool = True
+    lip2: bool = False
 
     def __init__(
-        self, cell, hidden_dim, label_dim, classification=True, output_step=1, *, key
+        self,
+        model_name,
+        num_blocks,
+        data_dim,
+        rnn_dim,
+        hidden_dim,
+        label_dim,
+        classification=True,
+        output_step=1,
+        linear_output=False,
+        vf_depth=None,
+        vf_width=None,
+        *,
+        key
     ):
-        self.cell = cell
+        cell_map = {
+            "rnn_linear": LinearCell,
+            "rnn_lstm": LSTMCell,
+            "rnn_gru": GRUCell,
+            "rnn_mlp": MLPCell,
+        }
+        cell_type = cell_map[model_name]
+
+        input_layer_key, *block_keys, output_layer_key = jr.split(key, num_blocks + 2)
+        self.input_layer = eqx.nn.Linear(data_dim, hidden_dim, key=input_layer_key)
+        self.blocks = [
+            RNNBlock(cell_type, rnn_dim, hidden_dim, vf_depth, vf_width, key=key)
+            for key in block_keys
+        ]
         self.output_layer = eqx.nn.Linear(
-            hidden_dim, label_dim, use_bias=False, key=key
+            hidden_dim, label_dim, use_bias=False, key=output_layer_key
         )
-        self.hidden_dim = self.cell.hidden_size
         self.classification = classification
         self.output_step = output_step
+        self.linear_output = linear_output
 
-    def __call__(self, x):
-        hidden = jnp.zeros((self.hidden_dim,))
-        hidden = (hidden,) * 2 if isinstance(self.cell, LSTMCell) else hidden
+    def __call__(self, x, state, key):
+        dropkeys = jr.split(key, len(self.blocks))
+        x = jax.vmap(self.input_layer)(x)
 
-        scan_fn = lambda state, input: (
-            self.cell(state, input),
-            self.cell(state, input),
-        )
-        final_state, all_states = jax.lax.scan(scan_fn, hidden, x)
-
-        final_state = final_state[0] if isinstance(self.cell, LSTMCell) else final_state
-        all_states = all_states[0] if isinstance(self.cell, LSTMCell) else all_states
+        for i, (block, key) in enumerate(zip(self.blocks, dropkeys)):
+            x, state = block(x, state, key=key)
 
         if self.classification:
-            return jax.nn.softmax(self.output_layer(final_state), axis=0)
+            x = jnp.mean(x, axis=0)
+            x = jax.nn.softmax(self.output_layer(x), axis=0)
         else:
-            all_states = all_states[self.output_step - 1 :: self.output_step]
-            return jax.nn.tanh(jax.vmap(self.output_layer)(all_states))
+            x = x[self.output_step - 1 :: self.output_step]
+            x = jax.vmap(self.output_layer)(x)
+            if not self.linear_output:
+                x = jax.nn.tanh(x)
+
+        return x, state
