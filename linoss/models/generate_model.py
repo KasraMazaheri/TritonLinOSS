@@ -57,9 +57,10 @@ import jax.random as jr
 from linoss.models.LogNeuralCDEs import LogNeuralCDE
 from linoss.models.LRU import LRU
 from linoss.models.NeuralCDEs import NeuralCDE, NeuralRDE
-from linoss.models.RNN import GRUCell, LinearCell, LSTMCell, MLPCell, RNN
+from linoss.models.RNN import RNN
 from linoss.models.S5 import S5
 from linoss.models.LinOSS import LinOSS
+from linoss.models.Transformer import Transformer, EncoderStack
 
 
 def create_model(
@@ -71,6 +72,7 @@ def create_model(
     logsig_dim=None,
     intervals=None,
     num_blocks=None,
+    decoder_blocks=None,
     vf_depth=None,
     vf_width=None,
     classification=True,
@@ -78,6 +80,8 @@ def create_model(
     output_step=1,
     ssm_dim=None,
     ssm_blocks=None,
+    num_heads=8,
+    encoder_only=False,
     solver=diffrax.Heun(),
     stepsize_controller=diffrax.ConstantStepSize(),
     dt0=1,
@@ -245,5 +249,30 @@ def create_model(
         )
         state = eqx.nn.State(rnn)
         return rnn, state
+    elif model_name == "Transformer":
+        if encoder_only:
+            transformer = EncoderStack(
+                num_blocks,
+                data_dim,
+                hidden_dim,
+                label_dim,
+                num_heads,
+                classification,
+                linear_output,
+                key=key,
+            )
+        else:
+            transformer = Transformer(
+                num_blocks,
+                decoder_blocks,
+                data_dim,
+                hidden_dim,
+                label_dim,
+                num_heads,
+                classification,
+                linear_output,
+                key=key,
+            )
+        return transformer, None
     else:
         raise ValueError(f"Unknown model name: {model_name}")

@@ -92,18 +92,15 @@ def parse_config(
         "rnn_linear",
     ]:
         ssm_dim = int(data["ssm_dim"])
-        num_blocks = int(data["num_blocks"])
-        scale = None
-        dt0 = None
     else:
         ssm_dim = None
-        num_blocks = None
-        dt0 = float(data["dt0"])
-        scale = data["scale"]
 
     if model_name in ["log_ncde", "nrde", "ncde"]:
         vf_depth = int(data["vf_depth"])
         vf_width = int(data["vf_width"])
+        dt0 = float(data["dt0"])
+        scale = data["scale"]
+        num_blocks = None
         if model_name in ["log_ncde", "nrde"]:
             logsig_depth = int(data["depth"])
             stepsize = int(float(data["stepsize"]))
@@ -120,6 +117,18 @@ def parse_config(
         logsig_depth = 1
         stepsize = 1
         lambd = None
+        scale = None
+        dt0 = None
+        num_blocks = int(data["num_blocks"])
+
+    if model_name == "Transformer":
+        num_heads = int(data["num_heads"])
+        decoder_blocks = int(data["decoder_blocks"])
+        encoder_only = bool(data["encoder_only"])
+    else:
+        num_heads = None
+        decoder_blocks = None
+        encoder_only = None
 
     # Dataset-specific arguments
     if dataset_name == "ppg":
@@ -139,6 +148,9 @@ def parse_config(
         "vf_width": vf_width,
         "ssm_dim": ssm_dim,
         "ssm_blocks": ssm_blocks,
+        "decoder_blocks": decoder_blocks,
+        "num_heads": num_heads,
+        "encoder_only": encoder_only,
         "dt0": dt0,
         "solver": diffrax.Heun(),
         "stepsize_controller": diffrax.ConstantStepSize(),

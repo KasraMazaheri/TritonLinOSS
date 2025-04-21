@@ -77,17 +77,22 @@ def run_inference(
     # Load dataset arguments and create dataset
     with open(save_dir / "dataset_args.pkl", "rb") as f:
         dataset_args = pickle.load(f)
+    dataset_args["data_dir"] = "/home/jaredb/drl/linoss/data"
     dataset = create_dataset(**dataset_args)
 
     # Run inference by split
     for split, dataloader in dataset.dataloaders.items():
         print(f"Running inference on split {split}")
         inputs = jnp.array(dataloader.data)
+        truth = jnp.array(dataloader.labels)
         outputs = []
         for x in tqdm(inputs):
-            output, _ = inference_model(
-                x, loaded_state, hyperparameters["key"], save_dir=states_dir
-            )
+            if hyperparameters["model_name"] == "Transformer":
+                output = inference_model.autoregressive_inference(x)
+            else:
+                output, _ = inference_model(
+                    x, loaded_state, hyperparameters["key"], save_dir=states_dir
+                )
             outputs.append(output)
         outputs = jnp.stack(outputs)
 
@@ -99,6 +104,7 @@ def run_inference(
         print(f"Saving inference inputs and outputs to {output_dir}")
         save_pickle(output_dir / f"inputs_{split}.pkl", np.array(inputs))
         save_pickle(output_dir / f"outputs_{split}.pkl", np.array(outputs))
+        save_pickle(output_dir / f"truth_{split}.pkl", np.array(truth))
 
 
 if __name__ == "__main__":
