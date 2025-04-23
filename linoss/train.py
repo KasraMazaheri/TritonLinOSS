@@ -52,6 +52,7 @@ import os
 import shutil
 import time
 import warnings
+from datetime import datetime
 
 import optax
 import equinox as eqx
@@ -104,9 +105,9 @@ def calc_output(model, X, state, key, stateful, nondeterministic, Y=None):
 @eqx.filter_jit
 @eqx.filter_value_and_grad(has_aux=True)
 def classification_loss(
-    diff_model, static_model, X, y, state, key, penalty, transformer: bool
+    diff_model, static_model, X, y, state, key, is_transformer: bool
 ):
-    if transformer:
+    if is_transformer:
         raise NotImplementedError
 
     model = eqx.combine(diff_model, static_model)
@@ -129,11 +130,9 @@ def classification_loss(
 
 @eqx.filter_jit
 @eqx.filter_value_and_grad(has_aux=True)
-def regression_loss(
-    diff_model, static_model, X, y, state, key, penalty, transformer: bool
-):
+def regression_loss(diff_model, static_model, X, y, state, key, is_transformer: bool):
     model = eqx.combine(diff_model, static_model)
-    if transformer:
+    if is_transformer:
         pred_y, state = calc_output(
             model, X, state, key, model.stateful, model.nondeterministic, Y=y
         )
@@ -152,10 +151,8 @@ def regression_loss(
             )
         norm *= model.lambd
 
-    first_vel_penalty = penalty * jnp.linalg.norm(pred_y[:, 1] - y[:, 0]) ** 2.0
-
     return (
-        jnp.mean(jnp.mean((pred_y - y) ** 2.0, axis=1)) + norm + first_vel_penalty,
+        jnp.mean(jnp.mean((pred_y - y) ** 2.0, axis=1)) + norm,
         state,
     )
 
@@ -171,12 +168,11 @@ def make_step(
     opt,
     opt_state,
     key,
-    penalty,
-    transformer: bool,
+    is_transformer: bool,
 ):
     diff_model, static_model = eqx.partition(model, filter_spec)
     (value, state), grads = loss_fn(
-        diff_model, static_model, X, y, state, key, penalty, transformer
+        diff_model, static_model, X, y, state, key, is_transformer
     )
     updates, opt_state = opt.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
@@ -199,7 +195,6 @@ def train_model(
     results_dir,
     output_dir,
     idx,
-    penalty,
 ):
     if metric == "accuracy":
         best_val = max
@@ -213,9 +208,9 @@ def train_model(
         raise ValueError(f"Unknown metric: {metric}")
 
     if model_name == "Transformer":
-        transformer = True
+        is_transformer = True
     else:
-        transformer = False
+        is_transformer = False
 
     batchkey, key = jr.split(key, 2)
     opt = optax.adam(learning_rate=lr_scheduler(lr))
@@ -260,8 +255,7 @@ def train_model(
             opt,
             opt_state,
             stepkey,
-            penalty,
-            transformer,
+            is_transformer,
         )
         running_loss += value
         if (step + 1) % print_steps == 0:
@@ -280,7 +274,7 @@ def train_model(
                     stepkey,
                     model.stateful,
                     model.nondeterministic,
-                    y if transformer else None,
+                    y if is_transformer else None,
                 )
                 predictions.append(prediction)
                 labels.append(y)
@@ -306,7 +300,7 @@ def train_model(
                     stepkey,
                     model.stateful,
                     model.nondeterministic,
-                    y if transformer else None,
+                    y if is_transformer else None,
                 )
                 predictions.append(prediction)
                 labels.append(y)
@@ -351,7 +345,7 @@ def train_model(
                             stepkey,
                             model.stateful,
                             model.nondeterministic,
-                            y if transformer else None,
+                            y if is_transformer else None,
                         )
                         predictions.append(prediction)
                         labels.append(y)
@@ -398,74 +392,30 @@ def create_dataset_model_and_train(
     output_step,
     metric,
     include_time,
-    T,
+    time_duration,
     model_name,
     stepsize,
     logsig_depth,
-    linoss_discretization,
-    damping,
-    r_min,
-    theta_max,
-    decoder_blocks,
-    num_heads,
-    encoder_only,
-    model_args,
     num_steps,
     print_steps,
     lr,
     lr_scheduler,
     batch_size,
     output_parent_dir,
+    model_args,
 ):
     key = jr.PRNGKey(seed)
     datasetkey, modelkey, trainkey, key = jr.split(key, 4)
 
-    # Form output directory name
-    if model_name == "LinOSS":
-        model_directory_name = model_name + "_" + linoss_discretization
-        if damping:
-            model_directory_name += "_damped"
-    else:
-        model_directory_name = model_name
-
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_str = (
         "/outputs/"
-        + model_directory_name
-        + "/"
-        + dataset_name
-        + f"/T_{T:.2f}_time_{include_time}_nsteps_{num_steps}_lr_{lr:.6f}"
+        + f"{model_name}/"
+        + f"{dataset_name}/"
+        + f"id_{idx}_seed_{seed}_timestamp_{timestamp}"
     )
-    if model_name == "log_ncde" or model_name == "nrde":
-        output_str += f"_stepsize_{stepsize:.2f}_depth_{logsig_depth}"
-    elif model_name == "LinOSS":
-        output_str += f"_r_{r_min:.2f}_theta_{theta_max:.2f}"
-    elif model_name == "Transformer":
-        output_str += (
-            f"_enc_only_{encoder_only}_dec_blocks_{decoder_blocks}_nheads_{num_heads}"
-        )
-    for k, v in model_args.items():
-        name = str(v)
-        if "(" in name:
-            name = name.split("(", 1)[0]
-        if name == "dt0":
-            output_str += f"_{k}_" + f"{v:.2f}"
-        elif name == "PIDController":
-            output_str += f"_rtol_{v.rtol}_atol_{v.atol}"
-        elif name == "ConstantStepSize":
-            output_str += "_controller_Constant"
-        if k == "num_blocks":
-            output_str += "_nb_" + name
-        elif k == "hidden_dim":
-            output_str += "_hd_" + name
-        elif k == "ssm_dim":
-            output_str += "_sd_" + name
-        else:
-            output_str += f"_{k}_" + name
-    output_str += f"_seed_{seed}"
     output_dir = output_parent_dir + output_str
-    results_dir = (
-        output_parent_dir + "/results/" + model_directory_name + "/" + dataset_name
-    )
+    results_dir = output_parent_dir + "/results/" + model_name + "/" + dataset_name
 
     # Delete if it already exists
     if os.path.isdir(output_dir):
@@ -479,12 +429,12 @@ def create_dataset_model_and_train(
     # Hardcoded properties
     if model_name in [
         "LinOSS",
-        "lru",
+        "LRU",
         "S5",
-        "rnn_linear",
-        "rnn_gru",
-        "rnn_lstm",
-        "rnn_mlp",
+        "LSTM",
+        "GRU",
+        "MLP_RNN",
+        "Linear_RNN",
         "Transformer",
     ]:
         if dataset_name == "IMDb":
@@ -498,31 +448,12 @@ def create_dataset_model_and_train(
     else:
         raise ValueError(f"Model name {model_name} not implemented")
 
-    linear_output = dataset_name in [
-        "Pouring",
-        "ScoopingPepper",
-        "ScoopingPowder",
-        "Stirring",
-        "SyntheticRegression",
-    ]
-
-    if dataset_name == "ppg":
-        theta_max = jnp.pi / 4
-        print(
-            f"Overwriting theta_max to {theta_max:.3f} for dataset {dataset_name}"
-            + " (numerical stability issues)"
-        )
-
-    penalty = 0.0
-    # if dataset_name in ["Pouring", "ScoopingPepper", "ScoopingPowder", "Stirring"]:
-    #     penalty = 1.0
-
     dataset_args = {
         "name": dataset_name,
         "data_dir": data_dir,
         "dataset_type": dataset_type,
         "task_type": "classification" if metric == "accuracy" else "regression",
-        "time_duration": T if include_time else None,
+        "time_duration": time_duration if include_time else None,
         "use_presplit": use_presplit,
         "stepsize": stepsize,
         "depth": logsig_depth,
@@ -538,14 +469,8 @@ def create_dataset_model_and_train(
         "label_dim": dataset.label_dim,
         "logsig_dim": dataset.logsig_dim if hasattr(dataset, "logsig_dim") else None,
         "intervals": dataset.intervals if hasattr(dataset, "intervals") else None,
-        "logsig_depth": logsig_depth,
         "classification": metric == "accuracy",
-        "linear_output": linear_output,
         "output_step": output_step,
-        "linoss_discretization": linoss_discretization,
-        "damping": damping,
-        "r_min": r_min,
-        "theta_max": theta_max,
         **model_args,
         "key": modelkey,
     }
@@ -578,7 +503,6 @@ def create_dataset_model_and_train(
         results_dir,
         output_dir,
         idx,
-        penalty,
     )
 
     return model, state, hyperparameters, dataset_args

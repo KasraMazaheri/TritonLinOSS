@@ -23,7 +23,8 @@ Parameters for `create_model`:
 - `classification`: A boolean indicating whether the task is classification (True) or
                     regression (False).
 - `output_step`: The step interval for outputting predictions in sequence models.
-- `ssm_dim`: The state-space model dimension for S5 models.
+- `model_dim`: The state-space model dimension for SSMs and RNNs or the model dimension
+                for transformers.
 - `ssm_blocks`: The number of SSM blocks in S5 models.
 - `solver`: The ODE solver used in CDE models, with a default of `diffrax.Heun()`.
 - `stepsize_controller`: The step size controller used in CDE models.
@@ -57,10 +58,10 @@ import jax.random as jr
 from linoss.models.LogNeuralCDEs import LogNeuralCDE
 from linoss.models.LRU import LRU
 from linoss.models.NeuralCDEs import NeuralCDE, NeuralRDE
-from linoss.models.RNN import RNN
+from linoss.models.RNN import BasicRNN, StackedRNN
 from linoss.models.S5 import S5
 from linoss.models.LinOSS import LinOSS
-from linoss.models.Transformer import Transformer, EncoderStack
+from linoss.models.Transformer import Transformer
 
 
 def create_model(
@@ -72,16 +73,13 @@ def create_model(
     logsig_dim=None,
     intervals=None,
     num_blocks=None,
-    decoder_blocks=None,
     vf_depth=None,
     vf_width=None,
     classification=True,
     linear_output=False,
     output_step=1,
-    ssm_dim=None,
+    model_dim=None,
     ssm_blocks=None,
-    num_heads=8,
-    encoder_only=False,
     solver=diffrax.Heun(),
     stepsize_controller=diffrax.ConstantStepSize(),
     dt0=1,
@@ -92,11 +90,15 @@ def create_model(
     damping=False,
     r_min=0.9,
     theta_max=3.141,
+    encoder_blocks=2,
+    decoder_blocks=2,
+    num_heads=4,
+    stack_rnn=False,
+    mlp_depth=None,
+    mlp_width=None,
     *,
     key,
 ):
-    cellkey, outputkey = jr.split(key, 2)
-
     if model_name == "log_ncde":
         if logsig_depth is None or intervals is None:
             raise ValueError("Must specify logsig_depth and intervals for a Log-NCDE.")
@@ -106,7 +108,7 @@ def create_model(
             LogNeuralCDE(
                 vf_width,
                 vf_depth,
-                hidden_dim,
+                model_dim,
                 data_dim,
                 logsig_depth,
                 label_dim,
@@ -130,7 +132,7 @@ def create_model(
             NeuralCDE(
                 vf_width,
                 vf_depth,
-                hidden_dim,
+                model_dim,
                 data_dim,
                 label_dim,
                 classification,
@@ -151,7 +153,7 @@ def create_model(
             NeuralRDE(
                 vf_width,
                 vf_depth,
-                hidden_dim,
+                model_dim,
                 data_dim,
                 logsig_dim,
                 label_dim,
@@ -167,13 +169,13 @@ def create_model(
             ),
             None,
         )
-    elif model_name == "lru":
+    elif model_name == "LRU":
         if num_blocks is None:
             raise ValueError("Must specify num_blocks for LRU.")
         lru = LRU(
             num_blocks,
             data_dim,
-            ssm_dim,
+            model_dim,
             hidden_dim,
             label_dim,
             classification,
@@ -187,14 +189,14 @@ def create_model(
     elif model_name == "S5":
         if num_blocks is None:
             raise ValueError("Must specify num_blocks for S5.")
-        if ssm_dim is None:
-            raise ValueError("Must specify ssm_dim for S5.")
+        if model_dim is None:
+            raise ValueError("Must specify model_dim for S5.")
         if ssm_blocks is None:
             raise ValueError("Must specify ssm_blocks for S5.")
         ssm = S5(
             num_blocks,
             data_dim,
-            ssm_dim,
+            model_dim,
             ssm_blocks,
             hidden_dim,
             label_dim,
@@ -216,7 +218,7 @@ def create_model(
         ssm = LinOSS(
             num_blocks,
             data_dim,
-            ssm_dim,
+            model_dim,
             hidden_dim,
             label_dim,
             classification,
@@ -230,50 +232,50 @@ def create_model(
         )
         state = eqx.nn.State(ssm)
         return ssm, state
-    elif model_name in ["rnn_linear", "rnn_gru", "rnn_lstm", "rnn_mlp"]:
-        if model_name == "rnn_mlp":
-            if vf_width is None or vf_depth is None:
-                raise ValueError("Must specify vf_width and vf_depth for MLP cell.")
-        rnn = RNN(
-            model_name,
-            num_blocks,
-            data_dim,
-            ssm_dim,
-            hidden_dim,
-            label_dim,
-            classification,
-            output_step,
-            linear_output,
-            vf_depth=vf_depth,
-            vf_width=vf_width,
-            key=key,
-        )
-        state = eqx.nn.State(rnn)
+    elif model_name in ["LSTM", "GRU", "MLP_RNN", "Linear_RNN"]:
+        if stack_rnn:
+            rnn = StackedRNN(
+                model_name,
+                num_blocks,
+                data_dim,
+                model_dim,
+                hidden_dim,
+                label_dim,
+                classification,
+                output_step,
+                linear_output,
+                mlp_depth=mlp_depth,
+                mlp_width=mlp_width,
+                key=key,
+            )
+            state = eqx.nn.State(rnn)
+        else:
+            rnn = BasicRNN(
+                model_name,
+                data_dim,
+                model_dim,
+                label_dim,
+                classification,
+                output_step,
+                linear_output,
+                mlp_depth=mlp_depth,
+                mlp_width=mlp_width,
+                key=key,
+            )
+            state = None
         return rnn, state
     elif model_name == "Transformer":
-        if encoder_only:
-            transformer = EncoderStack(
-                num_blocks,
-                data_dim,
-                hidden_dim,
-                label_dim,
-                num_heads,
-                classification,
-                linear_output,
-                key=key,
-            )
-        else:
-            transformer = Transformer(
-                num_blocks,
-                decoder_blocks,
-                data_dim,
-                hidden_dim,
-                label_dim,
-                num_heads,
-                classification,
-                linear_output,
-                key=key,
-            )
+        transformer = Transformer(
+            encoder_blocks,
+            decoder_blocks,
+            data_dim,
+            model_dim,
+            label_dim,
+            num_heads,
+            classification,
+            linear_output,
+            key=key,
+        )
         return transformer, None
     else:
         raise ValueError(f"Unknown model name: {model_name}")

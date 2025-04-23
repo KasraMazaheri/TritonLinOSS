@@ -83,6 +83,7 @@ class EncoderStack(eqx.Module):
     """
     Simplified encoder-only transformer architecture
     """
+
     start_token: jax.Array = eqx.field(init=False)
     encoder_embedding: Embedding
     encoder_blocks: list
@@ -137,6 +138,7 @@ class Transformer(eqx.Module):
     """
     Vanilla encoder-decoder transformer architecture
     """
+
     start_token: jax.Array = eqx.field(init=False)
     encoder_embedding: Embedding
     decoder_embedding: Embedding

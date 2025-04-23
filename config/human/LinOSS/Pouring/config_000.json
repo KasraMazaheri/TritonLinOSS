@@ -1,0 +1,30 @@
+{
+    "seeds": [
+        2345,
+        3456,
+        4567
+    ],
+    "data_dir": "data_dir",
+    "output_parent_dir": "",
+    "lr_scheduler": "lambda lr: lr",
+    "num_steps": 100000,
+    "print_steps": 1000,
+    "batch_size": 4,
+    "model_name": "LinOSS",
+    "metric": "mse",
+    "classification": false,
+    "output_step": 1,
+    "dataset_name": "Pouring",
+    "use_presplit": false,
+    "include_time": false,
+    "time_duration": 1,
+    "linear_output": true,
+    "lr": 1e-3,
+    "linoss_discretization": "IMEX",
+    "damping": true,
+    "num_blocks": 2,
+    "model_dim": 64,
+    "hidden_dim": 256,
+    "r_min": 0.9,
+    "theta_max": 3.1415
+}

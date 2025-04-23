@@ -52,91 +52,60 @@ def parse_config(
     with open(config_file, "r") as file:
         data = json.load(file)
 
+    def safe_load(data, key, dtype=None):
+        val = data.get(key, None)
+        if val is not None and dtype is not None:
+            val = dtype(val)
+        return val
+
     # All arguments
-    seeds = data["seeds"]
+    seeds = safe_load(data, "seeds")
     lr_scheduler = eval(data["lr_scheduler"])
-    num_steps = data["num_steps"]
-    print_steps = data["print_steps"]
-    batch_size = data["batch_size"]
-    metric = data["metric"]
-    use_presplit = data["use_presplit"]
-    lr = float(data["lr"])
-    include_time = data["time"].lower() == "true"
-    hidden_dim = int(data["hidden_dim"])
-    T = float(data["T"])
+    num_steps = safe_load(data, "num_steps")
+    print_steps = safe_load(data, "print_steps")
+    batch_size = safe_load(data, "batch_size", int)
+    metric = safe_load(data, "metric")
+    use_presplit = safe_load(data, "use_presplit", bool)
+    lr = safe_load(data, "lr", float)
+    include_time = safe_load(data, "include_time", bool)
+    time_duration = safe_load(data, "time_duration", float)
+    model_dim = safe_load(data, "model_dim", int)
+    hidden_dim = safe_load(data, "hidden_dim", int)
+    num_blocks = safe_load(data, "num_blocks", int)
 
     # Model-specific arguments
-    if model_name == "LinOSS":
-        linoss_discretization = data["linoss_discretization"]
-        damping = data["damping"]
-        theta_max = data.get("theta_max", 3.1415)
-    else:
-        linoss_discretization = None
-        damping = False
-        r_min = None
-        theta_max = None
-
-    if model_name in ["LinOSS", "lru"]:
-        r_min = data.get("r_min", 0)
-    else:
-        r_min = None
-
-    if model_name == "S5":
-        ssm_blocks = int(data["ssm_blocks"])
-    else:
-        ssm_blocks = None
-
-    if model_name in [
-        "lru",
-        "S5",
-        "LinOSS",
-        "rnn_lstm",
-        "rnn_gru",
-        "rnn_mlp",
-        "rnn_linear",
-    ]:
-        ssm_dim = int(data["ssm_dim"])
-    else:
-        ssm_dim = None
-
-    if model_name in ["log_ncde", "nrde", "ncde"]:
-        vf_depth = int(data["vf_depth"])
-        vf_width = int(data["vf_width"])
-        dt0 = float(data["dt0"])
-        scale = data["scale"]
-        num_blocks = None
-        if model_name in ["log_ncde", "nrde"]:
-            logsig_depth = int(data["depth"])
-            stepsize = int(float(data["stepsize"]))
-        else:
-            logsig_depth = 1
-            stepsize = 1
-        if model_name == "log_ncde":
-            lambd = float(data["lambd"])
-        else:
-            lambd = None
-    else:
-        vf_depth = None
-        vf_width = None
-        logsig_depth = 1
-        stepsize = 1
-        lambd = None
-        scale = None
-        dt0 = None
-        num_blocks = int(data["num_blocks"])
-
-    if model_name == "Transformer":
-        num_heads = int(data["num_heads"])
-        decoder_blocks = int(data["decoder_blocks"])
-        encoder_only = bool(data["encoder_only"])
-    else:
-        num_heads = None
-        decoder_blocks = None
-        encoder_only = None
+    # LinOSS type
+    linoss_discretization = safe_load(data, "linoss_discretization", str)
+    damping = safe_load(data, "damping", bool)
+    # LinOSS + LRU initialization
+    r_min = safe_load(data, "r_min", float)
+    theta_max = safe_load(data, "theta_max", float)
+    # S5 initialization
+    ssm_blocks = safe_load(data, "ssm_blocks", int)
+    # Transformer
+    num_heads = safe_load(data, "num_heads", int)
+    encoder_blocks = safe_load(data, "encoder_blocks", int)
+    decoder_blocks = safe_load(data, "decoder_blocks", int)
+    # RNNs
+    stack_rnn = safe_load(data, "stack_rnn", bool)
+    mlp_width = safe_load(data, "mlp_width", int)
+    mlp_depth = safe_load(data, "mlp_depth", int)
+    # All of the above
+    linear_output = safe_load(data, "linear_output", bool)
+    # Neural ODEs
+    vf_depth = safe_load(data, "vf_depth", int)
+    vf_width = safe_load(data, "vf_width", int)
+    dt0 = safe_load(data, "dt0", float)
+    scale = safe_load(data, "scale")
+    lambd = safe_load(data, "lambd", float)
+    logsig_depth = safe_load(data, "depth", int)
+    stepsize = safe_load(data, "stepsize", int)
+    solver = diffrax.Heun()
+    controller = diffrax.ConstantStepSize()
 
     # Dataset-specific arguments
     if dataset_name == "ppg":
-        output_step = int(data["output_step"])
+        output_step = safe_load(data, "output_step", int)
     else:
         output_step = 1
 
@@ -147,16 +116,28 @@ def parse_config(
     # Form model arguments
     model_args = {
         "num_blocks": num_blocks,
+        "model_dim": model_dim,
         "hidden_dim": hidden_dim,
+        "linear_output": linear_output,
+        "linoss_discretization": linoss_discretization,
+        "damping": damping,
+        "r_min": r_min,
+        "theta_max": theta_max,
+        "ssm_blocks": ssm_blocks,
+        "num_heads": num_heads,
+        "encoder_blocks": encoder_blocks,
+        "decoder_blocks": decoder_blocks,
+        "stack_rnn": stack_rnn,
+        "mlp_width": mlp_width,
+        "mlp_depth": mlp_depth,
         "vf_depth": vf_depth,
         "vf_width": vf_width,
-        "ssm_dim": ssm_dim,
-        "ssm_blocks": ssm_blocks,
         "dt0": dt0,
-        "solver": diffrax.Heun(),
-        "stepsize_controller": diffrax.ConstantStepSize(),
         "scale": scale,
         "lambd": lambd,
+        "logsig_depth": logsig_depth,
+        "solver": solver,
+        "stepsize_controller": controller,
     }
     # Form run arguments
     run_args = {
@@ -166,24 +147,17 @@ def parse_config(
         "output_step": output_step,
         "metric": metric,
         "include_time": include_time,
-        "T": T,
+        "time_duration": time_duration,
         "model_name": model_name,
         "stepsize": stepsize,
         "logsig_depth": logsig_depth,
-        "linoss_discretization": linoss_discretization,
-        "damping": damping,
-        "r_min": r_min,
-        "theta_max": theta_max,
-        "decoder_blocks": decoder_blocks,
-        "num_heads": num_heads,
-        "encoder_only": encoder_only,
-        "model_args": model_args,
         "num_steps": num_steps,
         "print_steps": print_steps,
         "lr": lr,
         "lr_scheduler": lr_scheduler,
         "batch_size": batch_size,
         "output_parent_dir": str(output_parent_dir),
+        "model_args": model_args,
     }
 
     return seeds, run_args
@@ -237,7 +211,12 @@ def run_experiments(
                     # Save model
                     if save_model:
                         save_dir = (
-                            BASE_DIR / "saves" / model_name / dataset_name / str(seed)
+                            BASE_DIR
+                            / "saves"
+                            / model_name
+                            / dataset_name
+                            / str(idx)
+                            / str(seed)
                         )
                         os.makedirs(save_dir, exist_ok=True)
                         with open(save_dir / "hyperparameters.pkl", "wb") as f:

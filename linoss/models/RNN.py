@@ -125,8 +125,70 @@ class MLPCell(_AbstractRNNCell):
         return all_states
 
 
-class RNNBlock(eqx.Module):
+class BasicRNN(eqx.Module):
+    """
+    Single-layer RNN with linear output transformation.
+    Recurrent cell can be "linear", "lstm", "gru", or "mlp".
+    """
 
+    output_layer: eqx.nn.Linear
+    cell: _AbstractRNNCell
+    classification: bool
+    linear_output: bool
+    stateful: bool = False
+    nondeterministic: bool = False
+    lip2: bool = False
+    output_step: int
+
+    def __init__(
+        self,
+        model_name,
+        data_dim,
+        model_dim,
+        label_dim,
+        classification=True,
+        output_step=1,
+        linear_output=False,
+        mlp_depth=None,
+        mlp_width=None,
+        *,
+        key
+    ):
+        cell_key, output_key = jr.split(key, 2)
+        cell_map = {
+            "LSTM": LSTMCell,
+            "GRU": GRUCell,
+            "Linear_RNN": LinearCell,
+            "MLP_RNN": MLPCell,
+        }
+        if model_name == "mlp" and (mlp_depth is None or mlp_width is None):
+            raise ValueError("MLP type RNN requires specifying depth and width.")
+
+        self.cell = cell_map[model_name](
+            data_dim, model_dim, mlp_depth, mlp_width, key=cell_key
+        )
+        self.output_layer = eqx.nn.Linear(
+            model_dim, label_dim, use_bias=False, key=output_key
+        )
+        self.classification = classification
+        self.output_step = output_step
+        self.linear_output = linear_output
+
+    def __call__(self, x):
+        x = self.cell(x)
+
+        if self.classification:
+            return jax.nn.softmax(self.output_layer(x[-1]), axis=0)
+        else:
+            x = x[self.output_step - 1 :: self.output_step]
+            x = jax.vmap(self.output_layer)(x)
+            if not self.linear_output:
+                x = jax.nn.tanh(x)
+
+        return x
+
+
+class RNNBlock(eqx.Module):
     norm: eqx.nn.BatchNorm
     cell: _AbstractRNNCell
     glu: GLU
@@ -157,7 +219,13 @@ class RNNBlock(eqx.Module):
         return x, state
 
 
-class RNN(eqx.Module):
+class StackedRNN(eqx.Module):
+    """
+    Multi-layer deep RNN with GLU activation, skip connections, and dropout.
+    Linear input/output operations.
+    Recurrent cell can be "linear", "lstm", "gru", or "mlp".
+    """
+
     input_layer: eqx.nn.Linear
     blocks: List[RNNBlock]
     output_layer: eqx.nn.Linear
@@ -179,23 +247,23 @@ class RNN(eqx.Module):
         classification=True,
         output_step=1,
         linear_output=False,
-        vf_depth=None,
-        vf_width=None,
+        mlp_depth=None,
+        mlp_width=None,
         *,
         key
     ):
         cell_map = {
-            "rnn_linear": LinearCell,
-            "rnn_lstm": LSTMCell,
-            "rnn_gru": GRUCell,
-            "rnn_mlp": MLPCell,
+            "LSTM": LSTMCell,
+            "GRU": GRUCell,
+            "Linear_RNN": LinearCell,
+            "MLP_RNN": MLPCell,
         }
         cell_type = cell_map[model_name]
 
         input_layer_key, *block_keys, output_layer_key = jr.split(key, num_blocks + 2)
         self.input_layer = eqx.nn.Linear(data_dim, hidden_dim, key=input_layer_key)
         self.blocks = [
-            RNNBlock(cell_type, rnn_dim, hidden_dim, vf_depth, vf_width, key=key)
+            RNNBlock(cell_type, rnn_dim, hidden_dim, mlp_depth, mlp_width, key=key)
             for key in block_keys
         ]
         self.output_layer = eqx.nn.Linear(

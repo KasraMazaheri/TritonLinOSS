@@ -1,0 +1,27 @@
+{
+    "seeds": [
+        2345,
+        3456,
+        4567
+    ],
+    "data_dir": "data_dir",
+    "output_parent_dir": "",
+    "lr_scheduler": "lambda lr: lr",
+    "num_steps": 100000,
+    "print_steps": 1000,
+    "batch_size": 4,
+    "model_name": "S5",
+    "metric": "mse",
+    "classification": false,
+    "output_step": 1,
+    "dataset_name": "Stirring",
+    "use_presplit": false,
+    "time_duration": 1,
+    "include_time": false,
+    "linear_output": true,
+    "lr": 1e-3,
+    "num_blocks": 6,
+    "model_dim": 256,
+    "hidden_dim": 64,
+    "ssm_blocks": 4
+}
