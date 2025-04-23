@@ -69,13 +69,17 @@ def parse_config(
     if model_name == "LinOSS":
         linoss_discretization = data["linoss_discretization"]
         damping = data["damping"]
-        r_min = data.get("r_min", 0)
         theta_max = data.get("theta_max", 3.1415)
     else:
         linoss_discretization = None
         damping = False
         r_min = None
         theta_max = None
+
+    if model_name in ["LinOSS", "lru"]:
+        r_min = data.get("r_min", 0)
+    else:
+        r_min = None
 
     if model_name == "S5":
         ssm_blocks = int(data["ssm_blocks"])
@@ -148,9 +152,6 @@ def parse_config(
         "vf_width": vf_width,
         "ssm_dim": ssm_dim,
         "ssm_blocks": ssm_blocks,
-        "decoder_blocks": decoder_blocks,
-        "num_heads": num_heads,
-        "encoder_only": encoder_only,
         "dt0": dt0,
         "solver": diffrax.Heun(),
         "stepsize_controller": diffrax.ConstantStepSize(),
@@ -173,6 +174,9 @@ def parse_config(
         "damping": damping,
         "r_min": r_min,
         "theta_max": theta_max,
+        "decoder_blocks": decoder_blocks,
+        "num_heads": num_heads,
+        "encoder_only": encoder_only,
         "model_args": model_args,
         "num_steps": num_steps,
         "print_steps": print_steps,

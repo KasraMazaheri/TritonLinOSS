@@ -15,6 +15,7 @@ import os
 import sys
 import pickle
 import numpy as np
+import jax
 import jax.numpy as jnp
 import equinox as eqx
 from tqdm import tqdm
@@ -77,8 +78,18 @@ def run_inference(
     # Load dataset arguments and create dataset
     with open(save_dir / "dataset_args.pkl", "rb") as f:
         dataset_args = pickle.load(f)
-    dataset_args["data_dir"] = "/home/jaredb/drl/linoss/data"
+    dataset_args["data_dir"] = str(BASE_DIR / "data")
     dataset = create_dataset(**dataset_args)
+
+    @eqx.filter_jit
+    def evaluate(model, x, s, key):
+        out, _ = jax.vmap(model, in_axes=(0, None, None))(x, s, key)
+        return out
+
+    @eqx.filter_jit
+    def evaluate_transformer(model, x):
+        out = jax.vmap(model.autoregressive_inference)(x)
+        return out
 
     # Run inference by split
     for split, dataloader in dataset.dataloaders.items():
@@ -86,15 +97,20 @@ def run_inference(
         inputs = jnp.array(dataloader.data)
         truth = jnp.array(dataloader.labels)
         outputs = []
-        for x in tqdm(inputs):
-            if hyperparameters["model_name"] == "Transformer":
-                output = inference_model.autoregressive_inference(x)
-            else:
+        if hyperparameters["model_name"] == "Transformer":
+            outputs = evaluate_transformer(inference_model, inputs)
+        elif states_dir is None:
+            outputs = evaluate(
+                inference_model, inputs, loaded_state, hyperparameters["key"]
+            )
+        else:
+            for x in tqdm(inputs):
                 output, _ = inference_model(
                     x, loaded_state, hyperparameters["key"], save_dir=states_dir
                 )
-            outputs.append(output)
-        outputs = jnp.stack(outputs)
+                outputs.append(output)
+            outputs = jnp.stack(outputs)
+        print(f"MSE: {np.mean((outputs - truth)**2)}")
 
         # Only save original data
         if dataset_args["time_duration"] is not None:

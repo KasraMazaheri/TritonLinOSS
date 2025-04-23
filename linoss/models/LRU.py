@@ -110,7 +110,7 @@ class LRUBlock(eqx.Module):
     glu: GLU
     drop: eqx.nn.Dropout
 
-    def __init__(self, N, H, r_min=0, r_max=1, max_phase=6.28, drop_rate=0.1, *, key):
+    def __init__(self, N, H, r_min=0.9, r_max=1, max_phase=6.28, drop_rate=0.1, *, key):
         lrukey, glukey = jr.split(key, 2)
         self.norm = eqx.nn.BatchNorm(
             input_size=H, axis_name="batch", channelwise_affine=False
@@ -158,7 +158,7 @@ class LRU(eqx.Module):
         classification,
         linear_output,
         output_step,
-        r_min=0,
+        r_min=0.9,
         r_max=1,
         max_phase=6.28,
         drop_rate=0.1,

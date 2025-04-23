@@ -179,6 +179,7 @@ def create_model(
             classification,
             linear_output,
             output_step,
+            r_min=r_min,
             key=key,
         )
         state = eqx.nn.State(lru)

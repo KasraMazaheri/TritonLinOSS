@@ -84,7 +84,10 @@ def calc_output(model, X, state, key, stateful, nondeterministic, Y=None):
         if stateful:
             if nondeterministic:
                 output, state = jax.vmap(
-                    model, axis_name="batch", in_axes=(0, None, None), out_axes=(0, None)
+                    model,
+                    axis_name="batch",
+                    in_axes=(0, None, None),
+                    out_axes=(0, None),
                 )(X, state, key)
             else:
                 output, state = jax.vmap(
@@ -100,7 +103,9 @@ def calc_output(model, X, state, key, stateful, nondeterministic, Y=None):
 
 @eqx.filter_jit
 @eqx.filter_value_and_grad(has_aux=True)
-def classification_loss(diff_model, static_model, X, y, state, key, penalty, transformer: bool):
+def classification_loss(
+    diff_model, static_model, X, y, state, key, penalty, transformer: bool
+):
     if transformer:
         raise NotImplementedError
 
@@ -124,7 +129,9 @@ def classification_loss(diff_model, static_model, X, y, state, key, penalty, tra
 
 @eqx.filter_jit
 @eqx.filter_value_and_grad(has_aux=True)
-def regression_loss(diff_model, static_model, X, y, state, key, penalty, transformer: bool):
+def regression_loss(
+    diff_model, static_model, X, y, state, key, penalty, transformer: bool
+):
     model = eqx.combine(diff_model, static_model)
     if transformer:
         pred_y, state = calc_output(
@@ -154,9 +161,23 @@ def regression_loss(diff_model, static_model, X, y, state, key, penalty, transfo
 
 
 @eqx.filter_jit
-def make_step(model, filter_spec, X, y, loss_fn, state, opt, opt_state, key, penalty, transformer: bool):
+def make_step(
+    model,
+    filter_spec,
+    X,
+    y,
+    loss_fn,
+    state,
+    opt,
+    opt_state,
+    key,
+    penalty,
+    transformer: bool,
+):
     diff_model, static_model = eqx.partition(model, filter_spec)
-    (value, state), grads = loss_fn(diff_model, static_model, X, y, state, key, penalty, transformer)
+    (value, state), grads = loss_fn(
+        diff_model, static_model, X, y, state, key, penalty, transformer
+    )
     updates, opt_state = opt.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
     return model, state, opt_state, value
@@ -223,15 +244,6 @@ def train_model(
     best_model = jtu.tree_map(lambda x: x, model)
     best_state = jtu.tree_map(lambda x: x, state)
 
-    if model_name == "Transformer":
-        train_batch_size = dataset.dataloaders["train"].size
-        val_batch_size = dataset.dataloaders["val"].size
-        test_batch_size = dataset.dataloaders["test"].size
-    else:
-        train_batch_size = batch_size
-        val_batch_size = batch_size
-        test_batch_size = batch_size
-
     for step, data in zip(
         range(num_steps),
         dataset.dataloaders["train"].loop(batch_size, key=batchkey),
@@ -239,13 +251,25 @@ def train_model(
         stepkey, key = jr.split(key, 2)
         X, y = data
         model, state, opt_state, value = make_step(
-            model, filter_spec, X, y, loss_fn, state, opt, opt_state, stepkey, penalty, transformer
+            model,
+            filter_spec,
+            X,
+            y,
+            loss_fn,
+            state,
+            opt,
+            opt_state,
+            stepkey,
+            penalty,
+            transformer,
         )
         running_loss += value
         if (step + 1) % print_steps == 0:
             predictions = []
             labels = []
-            for i, data in enumerate(dataset.dataloaders["train"].loop_epoch(train_batch_size)):
+            for i, data in enumerate(
+                dataset.dataloaders["train"].loop_epoch(batch_size)
+            ):
                 stepkey, key = jr.split(key, 2)
                 inference_model = eqx.tree_inference(model, value=True)
                 X, y = data
@@ -256,7 +280,7 @@ def train_model(
                     stepkey,
                     model.stateful,
                     model.nondeterministic,
-                    y if transformer else None
+                    y if transformer else None,
                 )
                 predictions.append(prediction)
                 labels.append(y)
@@ -271,7 +295,7 @@ def train_model(
                 train_metric = jnp.mean((prediction - y) ** 2)
             predictions = []
             labels = []
-            for data in dataset.dataloaders["val"].loop_epoch(val_batch_size):
+            for data in dataset.dataloaders["val"].loop_epoch(batch_size):
                 stepkey, key = jr.split(key, 2)
                 inference_model = eqx.tree_inference(model, value=True)
                 X, y = data
@@ -282,7 +306,7 @@ def train_model(
                     stepkey,
                     model.stateful,
                     model.nondeterministic,
-                    y if transformer else None
+                    y if transformer else None,
                 )
                 predictions.append(prediction)
                 labels.append(y)
@@ -316,7 +340,7 @@ def train_model(
                     val_metric_for_best_model.append(val_metric)
                     predictions = []
                     labels = []
-                    for data in dataset.dataloaders["test"].loop_epoch(test_batch_size):
+                    for data in dataset.dataloaders["test"].loop_epoch(batch_size):
                         stepkey, key = jr.split(key, 2)
                         inference_model = eqx.tree_inference(model, value=True)
                         X, y = data
@@ -327,7 +351,7 @@ def train_model(
                             stepkey,
                             model.stateful,
                             model.nondeterministic,
-                            y if transformer else None
+                            y if transformer else None,
                         )
                         predictions.append(prediction)
                         labels.append(y)
@@ -382,6 +406,9 @@ def create_dataset_model_and_train(
     damping,
     r_min,
     theta_max,
+    decoder_blocks,
+    num_heads,
+    encoder_only,
     model_args,
     num_steps,
     print_steps,
@@ -410,15 +437,23 @@ def create_dataset_model_and_train(
     )
     if model_name == "log_ncde" or model_name == "nrde":
         output_str += f"_stepsize_{stepsize:.2f}_depth_{logsig_depth}"
-    if model_name == "LinOSS":
+    elif model_name == "LinOSS":
         output_str += f"_r_{r_min:.2f}_theta_{theta_max:.2f}"
+    elif model_name == "Transformer":
+        output_str += (
+            f"_enc_only_{encoder_only}_dec_blocks_{decoder_blocks}_nheads_{num_heads}"
+        )
     for k, v in model_args.items():
         name = str(v)
         if "(" in name:
             name = name.split("(", 1)[0]
         if name == "dt0":
             output_str += f"_{k}_" + f"{v:.2f}"
-        elif k == "num_blocks":
+        elif name == "PIDController":
+            output_str += f"_rtol_{v.rtol}_atol_{v.atol}"
+        elif name == "ConstantStepSize":
+            output_str += "_controller_Constant"
+        if k == "num_blocks":
             output_str += "_nb_" + name
         elif k == "hidden_dim":
             output_str += "_hd_" + name
@@ -426,8 +461,6 @@ def create_dataset_model_and_train(
             output_str += "_sd_" + name
         else:
             output_str += f"_{k}_" + name
-        if name == "PIDController":
-            output_str += f"_rtol_{v.rtol}_atol_{v.atol}"
     output_str += f"_seed_{seed}"
     output_dir = output_parent_dir + output_str
     results_dir = (

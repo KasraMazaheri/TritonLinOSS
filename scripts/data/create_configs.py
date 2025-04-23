@@ -23,44 +23,45 @@ def create_configs(
     r_min,
     theta_max,
 ):
-    combos = itertools.product(
-        model_names,
-        dataset_names,
-        learning_rates,
-        hidden_dims,
-        state_dims,
-        blocks,
-        time,
-        discretization,
-        damping,
-        r_min,
-        theta_max,
-    )
+    for mn in model_names:
+        for dn in dataset_names:
 
-    for i, (mn, dn, lr, hd, sd, nb, t, dis, dam, r, theta) in enumerate(combos):
-        # I/O
-        input_filename = input_dir / mn / dn / "config_000.json"
-        os.makedirs(output_dir / mn / dn, exist_ok=True)
-        output_filename = output_dir / mn / dn / f"config_{i:03}.json"
+            combos = itertools.product(
+                learning_rates,
+                hidden_dims,
+                state_dims,
+                blocks,
+                time,
+                discretization,
+                damping,
+                r_min,
+                theta_max,
+            )
 
-        # Read/write config
-        with open(input_filename, "r") as in_file:
-            data = json.load(in_file)
+            for i, (lr, hd, sd, nb, t, dis, dam, r, theta) in enumerate(combos):
+                # I/O
+                input_filename = input_dir / mn / dn / "config_000.json"
+                os.makedirs(output_dir / mn / dn, exist_ok=True)
+                output_filename = output_dir / mn / dn / f"config_{i:03}.json"
 
-        data["model_name"] = str(mn)
-        data["dataset_name"] = str(dn)
-        data["lr"] = float(lr)
-        data["hidden_dim"] = int(hd)
-        data["ssm_dim"] = int(sd)
-        data["num_blocks"] = int(nb)
-        data["time"] = str(t)
-        data["linoss_discretization"] = str(dis)
-        data["damping"] = bool(dam)
-        data["r_min"] = float(r)
-        data["theta_max"] = float(theta)
+                # Read/write config
+                with open(input_filename, "r") as in_file:
+                    data = json.load(in_file)
 
-        with open(output_filename, "w") as out_file:
-            json.dump(data, out_file, indent=4)
+                data["model_name"] = str(mn)
+                data["dataset_name"] = str(dn)
+                data["lr"] = float(lr)
+                data["hidden_dim"] = int(hd)
+                data["ssm_dim"] = int(sd)
+                data["num_blocks"] = int(nb)
+                data["time"] = str(t)
+                data["linoss_discretization"] = str(dis)
+                data["damping"] = bool(dam)
+                data["r_min"] = float(r)
+                data["theta_max"] = float(theta)
+
+                with open(output_filename, "w") as out_file:
+                    json.dump(data, out_file, indent=4)
 
 
 if __name__ == "__main__":
@@ -68,7 +69,7 @@ if __name__ == "__main__":
     experiment_name = "mini"
     model_names = ["LinOSS"]
     dataset_names = ["IMDb"]
-    learning_rates = [1e-4, 1e-6]
+    learning_rates = [1e-3, 1e-5]
     hidden_dims = [64, 128]
     ssm_dims = [64, 128]
     num_blocks = [2, 6]

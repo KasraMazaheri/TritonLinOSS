@@ -161,7 +161,6 @@ class Transformer(eqx.Module):
         linear_output,
         *,
         key,
-        inference,
     ):
         self.classification = classification
         if self.classification:
