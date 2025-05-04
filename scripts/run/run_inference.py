@@ -84,6 +84,14 @@ def run_inference(
     @eqx.filter_jit
     def evaluate(model, x, s, key):
         out, _ = jax.vmap(model, in_axes=(0, None, None))(x, s, key)
+        if model.nondeterministic and model.stateful:
+            out, _ = jax.vmap(model, in_axes=(0, None, None))(x, s, key)
+        elif model.stateful:
+            out, _ = jax.vmap(model, in_axes=(0, None))(x, s)
+        elif model.nondeterministic:
+            out = jax.vmap(model, in_axes=(0, None))(x, key)
+        else:
+            out = jax.vmap(model)(x)
         return out
 
     @eqx.filter_jit

@@ -157,7 +157,9 @@ class DatasetLoader(ABC):
         else:
             full_data = train_data + val_data + test_data
             shuffled_data = [full_data[i] for i in idxs.tolist()]
-        if isinstance(train_labels, jnp.ndarray) or isinstance(train_labels, np.ndarray):
+        if isinstance(train_labels, jnp.ndarray) or isinstance(
+            train_labels, np.ndarray
+        ):
             full_labels = jnp.concatenate(
                 (train_labels, val_labels, test_labels), axis=0
             )
@@ -303,6 +305,39 @@ class PPGLoader(DatasetLoader):
         labels = (train_labels, val_labels, test_labels)
 
         return data, labels
+
+
+class MocapLoader(DatasetLoader):
+    def _load_and_process_data(self):
+        with open(self.data_dir + "/processed/Mocap/data.pkl", "rb") as f:
+            data = pickle.load(f)
+        with open(self.data_dir + "/processed/Mocap/labels.pkl", "rb") as f:
+            labels = pickle.load(f)
+
+        label_map = {"jump": 0, "run": 1, "walk": 2}
+        labels = jnp.array([label_map[la] for la in labels])
+        onehot_labels = jnp.zeros((len(labels), len(jnp.unique(labels))))
+        onehot_labels = onehot_labels.at[jnp.arange(len(labels)), labels].set(1)
+
+        # Pad data
+        max_len = np.max([len(d) for d in data])
+        padded_seqs = []
+        for seq in data:
+            num_dim = seq.shape[1]
+            padded_seq = np.pad(
+                seq.reshape(-1, num_dim),
+                pad_width=((0, max_len - len(seq)), (0, 0)),
+                mode="constant",
+                constant_values=0,
+            )
+            padded_seqs.append(padded_seq)
+        data = jnp.asarray(np.array(padded_seqs))
+
+        bounds = [0.7, 0.85]
+        split_data = split(data, bounds)
+        split_labels = split(onehot_labels, bounds)
+
+        return split_data, split_labels
 
 
 class SE3Loader(DatasetLoader):
@@ -546,6 +581,7 @@ def create_dataset(
 ):
     dataset_loaders = (
         {
+            "Mocap": MocapLoader,
             "SyntheticRegression": SyntheticLoader,
             "ppg": PPGLoader,
             "Cifar10": Cifar10Loader,

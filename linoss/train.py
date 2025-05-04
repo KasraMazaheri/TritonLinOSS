@@ -437,7 +437,8 @@ def create_dataset_model_and_train(
         "Linear_RNN",
         "Transformer",
     ]:
-        if dataset_name == "IMDb":
+        # Variable sequence length
+        if dataset_name in ["IMDb"]:
             dataset_type = BucketedDataset
         else:
             dataset_type = StandardDataset
