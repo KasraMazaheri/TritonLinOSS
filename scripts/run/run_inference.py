@@ -11,12 +11,14 @@ Arguments for `run_inference.py`:
                                 (this is data-intensive). Defaults to False.
 """
 
+import time
 import os
 import sys
 import pickle
 import numpy as np
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 import equinox as eqx
 from tqdm import tqdm
 import argparse
@@ -42,6 +44,8 @@ def save_pickle(filename, data):
 
 def run_inference(
     save_model_folder: str,
+    add_noise: float = 0.0,
+    data_split: Optional[str] = None,
     save_parameters: Optional[bool] = False,
     save_states: Optional[bool] = False,
 ):
@@ -50,10 +54,14 @@ def run_inference(
 
     Args:
         save_model_folder (str): Relative directory to linoss/ storing model save.
+        add_noise (float): Std dev of additive white noise applied to inputs.
+            Defaults to zero noise.
+        data_split (str): Which split to run inference on, ie "train", "val", or "test".
+            Defaults to None, ie inference over all data splits.
         save_parameters (bool, optional): If True, saves internal model parameters.
-                                          Defaults to False.
+            Defaults to False.
         save_states (bool, optional): If True, saves ssm states during inference
-                                      (this is data-intensive). Defaults to False.
+            (this is data-intensive). Defaults to False.
     """
     save_dir = BASE_DIR / save_model_folder
     output_dir = save_dir / "inference"
@@ -83,7 +91,6 @@ def run_inference(
 
     @eqx.filter_jit
     def evaluate(model, x, s, key):
-        out, _ = jax.vmap(model, in_axes=(0, None, None))(x, s, key)
         if model.nondeterministic and model.stateful:
             out, _ = jax.vmap(model, in_axes=(0, None, None))(x, s, key)
         elif model.stateful:
@@ -101,10 +108,20 @@ def run_inference(
 
     # Run inference by split
     for split, dataloader in dataset.dataloaders.items():
+        if data_split and split != data_split:
+            continue
+
         print(f"Running inference on split {split}")
         inputs = jnp.array(dataloader.data)
         truth = jnp.array(dataloader.labels)
-        outputs = []
+
+        # Add noise, if specified
+        noise = np.random.normal(scale=add_noise, size=inputs.shape)
+        inputs += noise
+
+        # Time inference
+        start_time = time.time()
+
         if hyperparameters["model_name"] == "Transformer":
             outputs = evaluate_transformer(inference_model, inputs)
         elif states_dir is None:
@@ -112,12 +129,23 @@ def run_inference(
                 inference_model, inputs, loaded_state, hyperparameters["key"]
             )
         else:
+            outputs = []
             for x in tqdm(inputs):
                 output, _ = inference_model(
                     x, loaded_state, hyperparameters["key"], save_dir=states_dir
                 )
                 outputs.append(output)
             outputs = jnp.stack(outputs)
+
+        outputs = jnp.squeeze(outputs)
+        inputs = jnp.squeeze(inputs)
+
+        jax.block_until_ready(outputs)  # Ensure timing includes compute
+        end_time = time.time()
+        total_time = end_time - start_time
+
+        print(f"Inference time: {total_time:.4f} seconds")
+        print(f"Average time per sample: {total_time / len(inputs):.6f} seconds")
         print(f"MSE: {np.mean((outputs - truth)**2)}")
 
         # Only save original data
@@ -137,22 +165,40 @@ if __name__ == "__main__":
         "--model_save_folder",
         type=str,
         required=True,
-        help="path to model save folder, relative to base directory linoss/",
+        help="Path to model save folder, relative to base directory linoss/",
+    )
+    parser.add_argument(
+        "--add_noise",
+        type=float,
+        required=False,
+        default=0.0,
+        help="Specifies standard deviation of additive white noise to inputs, \
+            Defaults to zero noise.",
+    )
+    parser.add_argument(
+        "--data_split",
+        type=str,
+        required=False,
+        default=None,
+        help="Which split of dataset to run inference on. Defaults to None, \
+            ie inference over all data splits.",
     )
     parser.add_argument(
         "--save_parameters",
         action="store_true",
-        help="whether or not to save model parameters",
+        help="Whether or not to save model parameters",
     )
     parser.add_argument(
         "--save_states",
         action="store_true",
-        help="whether or not to save internal ssm states during inference",
+        help="Whether or not to save internal ssm states during inference",
     )
     args = parser.parse_args()
 
     run_inference(
         args.model_save_folder,
+        add_noise=args.add_noise,
+        data_split=args.data_split,
         save_parameters=args.save_parameters,
         save_states=args.save_states,
     )
