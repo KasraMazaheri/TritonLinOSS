@@ -450,6 +450,68 @@ class Cifar10Loader(DatasetLoader):
         return data, labels
 
 
+class NoisyCifar10Loader(DatasetLoader):
+    def _load_and_process_data(self):
+        # Load CIFAR-10
+        download_dir = BASE_DIR / "data" / "raw" / "cifar"
+        dataset_train = torchvision.datasets.CIFAR10(
+            download_dir,
+            train=True,
+            download=True,
+        )
+        dataset_test = torchvision.datasets.CIFAR10(
+            download_dir,
+            train=False,
+        )
+        num_classes = 10
+
+        # Convert to numpy arrays first (need to do this for tensorflow datasets)
+        train_data = []
+        train_labels = []
+        for image, label in dataset_train:
+            train_data.append(np.array(image))
+            train_labels.append(np.array(label))
+        train_data = jnp.array(train_data)
+        train_labels = jnp.array(train_labels)
+        test_data = []
+        test_labels = []
+        for image, label in dataset_test:
+            test_data.append(np.array(image))
+            test_labels.append(np.array(label))
+        test_data = jnp.array(test_data)
+        test_labels = jnp.array(test_labels)
+
+        # Normalize by channel
+        mean = np.mean(train_data, axis=[0, 1, 2])
+        std = np.std(train_data, axis=[0, 1, 2])
+        train_data = (train_data - mean) / std
+        test_data = (test_data - mean) / std
+
+        # Flatten channels
+        train_data = jnp.array(train_data).reshape(-1, 32, 96)
+        test_data = jnp.array(test_data).reshape(-1, 32, 96)
+
+        # One-hot labels
+        train_labels = jax.nn.one_hot(jnp.array(train_labels), num_classes)
+        test_labels = jax.nn.one_hot(jnp.array(test_labels), num_classes)
+
+        # Split data
+        bounds = [0.9]  # From S5
+        (train_data, val_data) = split(train_data, bounds)
+        (train_labels, val_labels) = split(train_labels, bounds)
+        data = (train_data, val_data, test_data)
+        labels = (train_labels, val_labels, test_labels)
+
+        return data, labels
+
+    def data_out_func(self, batch):
+        """Noisify during runtime"""
+        key = jax.random.PRNGKey(42)
+        noise = jax.random.normal(key, shape=(len(batch), 968, 96))
+        noisy_batch = jnp.concatenate([noise, batch], axis=1)
+        return noisy_batch
+
+
 class IMDbLoader(DatasetLoader):
     start_char = 1
     oov_char = 2
@@ -585,6 +647,7 @@ def create_dataset(
             "SyntheticRegression": SyntheticLoader,
             "ppg": PPGLoader,
             "Cifar10": Cifar10Loader,
+            "NoisyCifar10": NoisyCifar10Loader,
             "IMDb": IMDbLoader,
         }
         | {name: UEALoader for name in get_subfolders(data_dir + "/processed/UEA")}
