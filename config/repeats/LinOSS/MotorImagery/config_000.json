@@ -17,17 +17,14 @@
     "classification": true,
     "dataset_name": "MotorImagery",
     "use_presplit": false,
-    "T": 1,
-    "dt0": null,
+    "include_time": false,
+    "time_duration": 1,
     "linoss_discretization": "IMEX",
     "damping": true,
-    "r_min": 0.9,
-    "theta_max": 3.141,
-    "scale": 0,
-    "time": "False",
     "lr": 0.001,
     "num_blocks": 4,
     "hidden_dim": 16,
-    "ssm_dim": 64,
-    "ssm_blocks": "4"
+    "model_dim": 64,
+    "r_min": 0.9,
+    "theta_max": 3.141
 }

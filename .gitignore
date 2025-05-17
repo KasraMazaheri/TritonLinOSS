@@ -3,5 +3,6 @@
 /results/
 /saves/
 /data/
-/data/
+/figures/
+/config/human/
 __pycache__/
