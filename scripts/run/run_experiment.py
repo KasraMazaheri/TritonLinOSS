@@ -106,6 +106,7 @@ def parse_config(
     # Dataset-specific arguments
     if dataset_name == "ppg":
         output_step = safe_load(data, "output_step", int)
+        theta_max = np.pi / 4  # Numerical instability issues
     else:
         output_step = 1
 
