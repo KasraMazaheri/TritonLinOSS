@@ -190,12 +190,12 @@ def run_experiments(
 
             # Batching
             run_config_folder = BASE_DIR / config_folder / model_name / dataset_name
-            config_files = glob.glob(str(run_config_folder / "config_*"))
-            config_files = config_files[task_id : len(config_files) : num_tasks]
-            for i, config_file in enumerate(config_files):
-                idx = int(config_file[-8:-5])
+            num_configs = len(glob.glob(str(run_config_folder / "config_*")))
+            idxs = range(num_configs)[task_id:num_configs:num_tasks]
+            for idx in idxs:
 
                 # Load configuration
+                config_file = run_config_folder / f"config_{idx:03}.json"
                 print(f"Loading config {config_file}")
                 seeds, run_args = parse_config(
                     str(config_file), model_name, dataset_name

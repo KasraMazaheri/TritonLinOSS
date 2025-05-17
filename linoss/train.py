@@ -73,7 +73,6 @@ from linoss.models.generate_model import create_model
 # Ignore warning in loss fn calculation
 warnings.simplefilter("ignore", category=jnp.ComplexWarning)
 
-
 @eqx.filter_jit
 def calc_output(model, X, state, key, stateful, nondeterministic, Y=None):
     if Y is not None:
@@ -476,6 +475,9 @@ def create_dataset_model_and_train(
         "key": modelkey,
     }
     model, state = create_model(**hyperparameters)
+
+    # n_params = sum(x.size for x in jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array)))
+    # print(f"Total number of parameters: {n_params}")
 
     filter_spec = jax.tree_util.tree_map(lambda _: True, model)
     if model_name == "nrde" or model_name == "log_ncde":

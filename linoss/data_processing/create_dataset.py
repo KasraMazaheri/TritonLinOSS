@@ -36,8 +36,8 @@ import numpy as np
 import jax.numpy as jnp
 import jax.random as jr
 import jax.nn
-import torchvision
-import tensorflow as tf
+# import torchvision
+# import tensorflow as tf
 
 from linoss.data_processing.dataset import (
     StandardDataset,
@@ -502,13 +502,28 @@ class NoisyCifar10Loader(DatasetLoader):
         data = (train_data, val_data, test_data)
         labels = (train_labels, val_labels, test_labels)
 
+        # out_dir = BASE_DIR / "data" / "processed" / "NoisyCifar10"
+        # os.makedirs(out_dir, exist_ok=True)
+        # with open(out_dir / "X_train.pkl", "wb") as f:
+        #     pickle.dump(train_data, f)
+        # with open(out_dir / "y_train.pkl", "wb") as f:
+        #     pickle.dump(train_labels, f)
+        # with open(out_dir / "X_val.pkl", "wb") as f:
+        #     pickle.dump(val_data, f)
+        # with open(out_dir / "y_val.pkl", "wb") as f:
+        #     pickle.dump(val_labels, f)
+        # with open(out_dir / "X_test.pkl", "wb") as f:
+        #     pickle.dump(test_data, f)
+        # with open(out_dir / "y_test.pkl", "wb") as f:
+        #     pickle.dump(test_labels, f)
+
         return data, labels
 
     def data_out_func(self, batch):
         """Noisify during runtime"""
         key = jax.random.PRNGKey(42)
-        noise = jax.random.normal(key, shape=(len(batch), 968, 96))
-        noisy_batch = jnp.concatenate([noise, batch], axis=1)
+        noise = jax.random.normal(key, shape=(batch.shape[0], 968, batch.shape[-1]))
+        noisy_batch = jnp.concatenate([batch, noise], axis=1)
         return noisy_batch
 
 
