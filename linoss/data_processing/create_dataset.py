@@ -36,8 +36,8 @@ import numpy as np
 import jax.numpy as jnp
 import jax.random as jr
 import jax.nn
-# import torchvision
-# import tensorflow as tf
+import torchvision
+import tensorflow as tf
 
 from linoss.data_processing.dataset import (
     StandardDataset,
@@ -634,6 +634,52 @@ class IMDbLoader(DatasetLoader):
         return batch_one_hot
 
 
+class MNISTLoader(DatasetLoader):
+    def _load_and_process_data(self):
+        download_dir = BASE_DIR / "data" / "raw" / "mnist"
+        dataset_train = torchvision.datasets.MNIST(
+            download_dir,
+            train=True,
+            download=True,
+        )
+        dataset_test = torchvision.datasets.MNIST(
+            download_dir,
+            train=False,
+        )
+        data_dim = 28
+        num_classes = 10
+
+        train_data = []
+        train_labels = []
+        for image, label in dataset_train:
+            train_data.append(np.array(image))
+            train_labels.append(np.array(label))
+        train_data = jnp.array(train_data).reshape(-1, 28, data_dim)
+        train_labels = jax.nn.one_hot(jnp.array(train_labels), num_classes)
+
+        # Normalize
+        mean = np.mean(train_data)
+        std = np.std(train_data)
+        train_data = (train_data - mean) / std
+
+        test_data = []
+        test_labels = []
+        for image, label in dataset_test:
+            test_data.append(np.array(image))
+            test_labels.append(np.array(label))
+        test_data = jnp.array(test_data).reshape(-1, 28, data_dim)
+        test_data = (test_data - mean) / std
+        test_labels = jax.nn.one_hot(jnp.array(test_labels), num_classes)
+
+        bounds = [0.9] 
+        (train_data, val_data) = split(train_data, bounds)
+        (train_labels, val_labels) = split(train_labels, bounds)
+        data = (train_data, val_data, test_data)
+        labels = (train_labels, val_labels, test_labels)
+
+        return data, labels
+
+
 # =============================================
 # SECTION: Entrypoint function
 # =============================================
@@ -664,6 +710,7 @@ def create_dataset(
             "Cifar10": Cifar10Loader,
             "NoisyCifar10": NoisyCifar10Loader,
             "IMDb": IMDbLoader,
+            "MNIST": MNISTLoader,
         }
         | {name: UEALoader for name in get_subfolders(data_dir + "/processed/UEA")}
         | {name: ToyLoader for name in get_subfolders(data_dir + "/processed/toy")}
