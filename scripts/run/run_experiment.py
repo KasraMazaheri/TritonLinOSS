@@ -17,6 +17,7 @@ Arguments for `run_experiments.py`:
 import os
 import sys
 import json
+import numpy as np
 import diffrax
 import glob
 import pickle
@@ -92,6 +93,7 @@ def parse_config(
     mlp_depth = safe_load(data, "mlp_depth", int)
     # All of the above
     linear_output = safe_load(data, "linear_output", bool)
+    use_last_output = safe_load(data, "use_last_output", bool)
     # Neural ODEs
     vf_depth = safe_load(data, "vf_depth", int)
     vf_width = safe_load(data, "vf_width", int)
@@ -139,6 +141,7 @@ def parse_config(
         "logsig_depth": logsig_depth,
         "solver": solver,
         "stepsize_controller": controller,
+        "use_last_output": use_last_output,
     }
     # Form run arguments
     run_args = {
