@@ -75,6 +75,7 @@ warnings.simplefilter("ignore", category=jnp.ComplexWarning)
 
 @eqx.filter_jit
 def calc_output(model, X, state, key, stateful, nondeterministic, Y=None):
+    bsz, sql, dim = X.shape
     if Y is not None:
         if stateful or nondeterministic:
             raise NotImplementedError
@@ -83,18 +84,20 @@ def calc_output(model, X, state, key, stateful, nondeterministic, Y=None):
     else:
         if stateful:
             if nondeterministic:
+                keys = jr.split(key, bsz)
                 output, state = jax.vmap(
                     model,
                     axis_name="batch",
-                    in_axes=(0, None, None),
+                    in_axes=(0, None, 0),
                     out_axes=(0, None),
-                )(X, state, key)
+                )(X, state, keys)
             else:
                 output, state = jax.vmap(
                     model, axis_name="batch", in_axes=(0, None), out_axes=(0, None)
                 )(X, state)
         elif nondeterministic:
-            output = jax.vmap(model, in_axes=(0, None))(X, key)
+            keys = jr.split(key, bsz)
+            output = jax.vmap(model, in_axes=(0, 0))(X, keys)
         else:
             output = jax.vmap(model)(X)
 
@@ -139,7 +142,6 @@ def regression_loss(diff_model, static_model, X, y, state, key, is_transformer: 
         pred_y, state = calc_output(
             model, X, state, key, model.stateful, model.nondeterministic
         )
-    pred_y = jnp.squeeze(pred_y)
 
     norm = 0
     if model.lip2:
@@ -284,7 +286,6 @@ def train_model(
                     jnp.argmax(prediction, axis=1) == jnp.argmax(y, axis=1)
                 )
             else:
-                prediction = jnp.squeeze(prediction)
                 train_metric = jnp.mean((prediction - y) ** 2)
             predictions = []
             labels = []
@@ -310,7 +311,6 @@ def train_model(
                     jnp.argmax(prediction, axis=1) == jnp.argmax(y, axis=1)
                 )
             else:
-                prediction = jnp.squeeze(prediction)
                 val_metric = jnp.mean((prediction - y) ** 2)
             end = time.time()
             total_time = end - start
@@ -321,12 +321,12 @@ def train_model(
             )
             start = time.time()
             if step > 0:
-                if operator_no_improv(val_metric, best_val(val_metric_for_best_model)):
-                    no_val_improvement += 1
-                    if no_val_improvement > 10:
-                        break
-                else:
-                    no_val_improvement = 0
+                # if operator_no_improv(val_metric, best_val(val_metric_for_best_model)):
+                #     no_val_improvement += 1
+                #     if no_val_improvement > 10:
+                #         break
+                # else:
+                #     no_val_improvement = 0
                 if operator_improv(val_metric, best_val(val_metric_for_best_model)):
                     best_model = jtu.tree_map(lambda x: x, model)
                     best_state = jtu.tree_map(lambda x: x, state)
@@ -355,7 +355,6 @@ def train_model(
                             jnp.argmax(prediction, axis=1) == jnp.argmax(y, axis=1)
                         )
                     else:
-                        prediction = jnp.squeeze(prediction)
                         test_metric = jnp.mean((prediction - y) ** 2)
                     print(f"Test metric: {test_metric}")
                 running_loss = 0.0

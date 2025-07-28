@@ -678,6 +678,96 @@ class MNISTLoader(DatasetLoader):
         labels = (train_labels, val_labels, test_labels)
 
         return data, labels
+    
+
+class sMNISTLoader(DatasetLoader):
+    def _load_and_process_data(self):
+        download_dir = BASE_DIR / "data" / "raw" / "mnist"
+        dataset_train = torchvision.datasets.MNIST(
+            download_dir,
+            train=True,
+            download=True,
+        )
+        dataset_test = torchvision.datasets.MNIST(
+            download_dir,
+            train=False,
+        )
+        data_dim = 1
+        num_classes = 10
+
+        train_data = []
+        train_labels = []
+        for image, label in dataset_train:
+            train_data.append(np.array(image))
+            train_labels.append(np.array(label))
+        train_data = jnp.array(train_data).reshape(len(train_data), 28*28, data_dim)
+        train_labels = jax.nn.one_hot(jnp.array(train_labels), num_classes)
+
+        # Normalize
+        mean = np.mean(train_data)
+        std = np.std(train_data)
+        train_data = (train_data - mean) / std
+
+        test_data = []
+        test_labels = []
+        for image, label in dataset_test:
+            test_data.append(np.array(image))
+            test_labels.append(np.array(label))
+        test_data = jnp.array(test_data).reshape(len(test_data), 28*28, data_dim)
+        test_data = (test_data - mean) / std
+        test_labels = jax.nn.one_hot(jnp.array(test_labels), num_classes)
+
+        bounds = [0.9] 
+        (train_data, val_data) = split(train_data, bounds)
+        (train_labels, val_labels) = split(train_labels, bounds)
+        data = (train_data, val_data, test_data)
+        labels = (train_labels, val_labels, test_labels)
+
+        return data, labels
+
+
+class AddingLoader(DatasetLoader):
+    sql_train = 2000
+    sql_val = 2000
+    sql_test = 2000
+    size_train = 7000
+    size_val = 1500
+    size_test = 1500
+
+    def _load_and_process_data(self):
+        train_key = jax.random.PRNGKey(0)
+        val_key = jax.random.PRNGKey(1)
+        test_key = jax.random.PRNGKey(2)
+
+        def generate_batch(bsz, sql, key):
+            """
+            data: (bsz, sql, 2)
+            labels: (bsz, 1, 1)
+            """
+            key1, key2, key3 = jr.split(key, 3)
+            values = jr.uniform(key1, shape=(bsz, sql, 1))
+            half = sql // 2
+            half_1 = jr.randint(key2, (bsz,), 0, half)
+            half_2 = jr.randint(key3, (bsz,), half, sql)
+            def set_indices(idx1, idx2):
+                arr = jnp.zeros((sql,))
+                arr = arr.at[idx1].set(1)
+                arr = arr.at[idx2].set(1)
+                return arr
+            indices_1d = jax.vmap(set_indices)(half_1, half_2)
+            indices = jnp.expand_dims(indices_1d, axis=-1)  # shape: (bsz, sql, 1)
+            data = jnp.concatenate((values, indices), axis=2)
+            labels = (values * indices).sum(axis=1, keepdims=True)
+            return data, labels
+
+        train_data, train_labels = generate_batch(self.size_train, self.sql_train, train_key)
+        val_data, val_labels = generate_batch(self.size_val, self.sql_val, val_key)
+        test_data, test_labels = generate_batch(self.size_test, self.sql_test, test_key)
+
+        data = (train_data, val_data, test_data)
+        labels = (train_labels, val_labels, test_labels)
+
+        return data, labels
 
 
 # =============================================
@@ -711,6 +801,8 @@ def create_dataset(
             "NoisyCifar10": NoisyCifar10Loader,
             "IMDb": IMDbLoader,
             "MNIST": MNISTLoader,
+            "sMNIST": sMNISTLoader,
+            "Adding": AddingLoader,
         }
         | {name: UEALoader for name in get_subfolders(data_dir + "/processed/UEA")}
         | {name: ToyLoader for name in get_subfolders(data_dir + "/processed/toy")}

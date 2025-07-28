@@ -337,6 +337,7 @@ class LinOSS(eqx.Module):
     classification: bool
     linear_output: bool
     output_step: int
+    use_last_output: bool
     discretization: str
     damping: bool
     stateful: bool = True
@@ -353,6 +354,7 @@ class LinOSS(eqx.Module):
         classification,
         linear_output,
         output_step,
+        use_last_output,
         discretization,
         damping,
         r_min,
@@ -360,7 +362,6 @@ class LinOSS(eqx.Module):
         *,
         key,
     ):
-
         linear_encoder_key, *block_keys, linear_layer_key, weightkey = jr.split(
             key, num_blocks + 3
         )
@@ -381,11 +382,13 @@ class LinOSS(eqx.Module):
         self.classification = classification
         self.linear_output = linear_output
         self.output_step = output_step
+        self.use_last_output = use_last_output
         self.discretization = discretization
         self.damping = damping
 
     def __call__(self, x, state, key):
         """Compute LinOSS."""
+        sql, _ = x.shape
         dropkeys = jr.split(key, len(self.blocks))
         x = jax.vmap(self.linear_encoder)(x)
 
@@ -393,11 +396,20 @@ class LinOSS(eqx.Module):
             x, state = block(x, state, key=key)
 
         if self.classification:
-            x = jnp.mean(x, axis=0)
+            if self.use_last_output:
+                x = x[-1, :]
+            else:
+                x = jnp.mean(x, axis=0)
             x = jax.nn.softmax(self.linear_layer(x), axis=0)
         else:
-            x = x[self.output_step - 1 :: self.output_step]
-            x = jax.vmap(self.linear_layer)(x)
+            if self.use_last_output:
+                x = x[-1, :]
+                x = self.linear_layer(x)
+                x = x.reshape(1, -1)
+            else:
+                x = x[self.output_step - 1 :: self.output_step]
+                x = jax.vmap(self.linear_layer)(x)
+                x = x.reshape(sql // self.output_step, -1)
             if not self.linear_output:
                 x = jax.nn.tanh(x)
 
