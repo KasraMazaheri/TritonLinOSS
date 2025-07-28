@@ -94,65 +94,7 @@ def binary_operator(q_i, q_j):
     return Anew, new_b + b_j
 
 
-def make_linoss_im_recurrence(A_diag, step):
-    """Compute the PxP recurrent matrix M for LinOSS-IM
-    Args:
-        A_diag  (float32):   diagonal state matrix   (P,)
-        step    (float):     discretization time-step $\Delta_t$  (P,)
-    Returns:
-        M    (float32): the recurrent matrix (P, P)
-    """
-    S = 1.0 / (1.0 + step**2.0 * A_diag)
-    M_11 = jnp.diag(1.0 - step**2.0 * A_diag * S)
-    M_12 = jnp.diag(-1.0 * step * A_diag * S)
-    M_21 = jnp.diag(step * S)
-    M_22 = jnp.diag(S)
-
-    M = jnp.block([[M_11, M_12], [M_21, M_22]])
-
-    return M
-
-
-def make_linoss_imex_recurrence(A_diag, step):
-    """Compute the PxP recurrent matrix M for LinOSS-IMEX
-    Args:
-        A_diag  (float32):   diagonal state matrix   (P,)
-        step    (float):     discretization time-step $\Delta_t$  (P,)
-    Returns:
-        M  (float32): the recurrent matrix (P, P)
-    """
-    M_11 = jnp.diag(jnp.ones_like(A_diag))
-    M_12 = jnp.diag(-1.0 * step * A_diag)
-    M_21 = jnp.diag(step)
-    M_22 = jnp.diag(1.0 - (step**2.0) * A_diag)
-
-    M = jnp.block([[M_11, M_12], [M_21, M_22]])
-
-    return M
-
-
-def make_damped_linoss_imex_recurrence(A_diag, G_diag, step):
-    """Compute the PxP recurrent matrix M for Damped LinOSS-IMEX
-    Args:
-        A_diag  (float32):   diagonal state matrix   (P,)
-        G_diag  (float32):   diagonal damping matrix   (P,)
-        step    (float):     discretization time-step $\Delta_t$  (P,)
-    Returns:
-        M    (float32): the recurrent matrix (P, P)
-    """
-    I = jnp.ones_like(A_diag)
-    S = I + step * G_diag
-    M_11 = jnp.diag(1.0 / S)
-    M_12 = jnp.diag(-step / S * A_diag)
-    M_21 = jnp.diag(step / S)
-    M_22 = jnp.diag(I - step**2 / S * A_diag)
-
-    M = jnp.block([[M_11, M_12], [M_21, M_22]])
-
-    return M
-
-
-def apply_linoss_im(A_diag, B, input_sequence, step):
+def linoss_im(A_diag, B, input_sequence, step):
     """Compute the LxH output of LinOSS-IM given an LxH input.
     Args:
         A_diag  (float32):   diagonal state matrix   (P,)
@@ -184,7 +126,7 @@ def apply_linoss_im(A_diag, B, input_sequence, step):
     return ys
 
 
-def apply_linoss_imex(A_diag, B, input_sequence, step):
+def linoss_imex(A_diag, B, input_sequence, step):
     """Compute the LxH output of of LinOSS-IMEX given an LxH input.
     Args:
         A_diag  (float32):   diagonal state matrix   (P,)
@@ -215,7 +157,7 @@ def apply_linoss_imex(A_diag, B, input_sequence, step):
     return ys
 
 
-def apply_damped_linoss_imex(A_diag, G_diag, B, input_sequence, step):
+def damped_linoss_imex(A_diag, G_diag, B, input_sequence, step):
     """Compute the LxH output of of Damped LinOSS-IMEX given an LxH input.
     Args:
         A_diag  (float32):   diagonal state matrix   (P,)
@@ -290,7 +232,7 @@ class LinOSSLayer(eqx.Module):
         self.discretization = discretization
         self.damping = damping
 
-    def __call__(self, input_sequence, save_dir=None):
+    def __call__(self, input_sequence):
         steps = nn.sigmoid(self.steps)
 
         B_complex = self.B[..., 0] + 1j * self.B[..., 1]
@@ -305,7 +247,7 @@ class LinOSSLayer(eqx.Module):
                 )
             else:
                 A_diag = nn.relu(self.A_diag)
-                ys = apply_linoss_im(A_diag, B_complex, input_sequence, steps)
+                ys = linoss_im(A_diag, B_complex, input_sequence, steps)
         elif self.discretization == "IMEX":
             if self.damping:
                 G_diag = nn.relu(self.G_diag)
@@ -320,12 +262,12 @@ class LinOSSLayer(eqx.Module):
                     + nn.relu(self.A_diag - A_boundary_low)
                     - nn.relu(self.A_diag - A_boundary_high)
                 )
-                ys = apply_damped_linoss_imex(
+                ys = damped_linoss_imex(
                     A_diag, G_diag, B_complex, input_sequence, steps
                 )
             else:
                 A_diag = nn.relu(self.A_diag)
-                ys = apply_linoss_imex(A_diag, B_complex, input_sequence, steps)
+                ys = linoss_imex(A_diag, B_complex, input_sequence, steps)
         else:
             raise NotImplementedError(
                 "Discretization {} not implemented".format(self.discretization)
@@ -335,11 +277,6 @@ class LinOSSLayer(eqx.Module):
         Cy = jax.vmap(lambda x: (C_complex @ x).real)(ys)
         Du = jax.vmap(lambda u: self.D * u)(input_sequence)
         xs = Cy + Du
-
-        # Save weights, SSM states, SSM outputs
-        if save_dir is not None:
-            jnp.save(save_dir + "ssm_states.npy", ys)
-            jnp.save(save_dir + "ssm_outputs.npy", xs)
 
         return xs
 
@@ -378,21 +315,17 @@ class LinOSSBlock(eqx.Module):
         self.glu = GLU(H, H, key=glukey)
         self.drop = eqx.nn.Dropout(p=drop_rate)
 
-    def __call__(self, x, state, *, key, save_dir=None):
+    def __call__(self, x, state, *, key):
         """Compute LinOSS block."""
         dropkey1, dropkey2 = jr.split(key, 2)
         skip = x
         x, state = self.norm(x.T, state)
         x = x.T
-        x = self.ssm(x, save_dir=save_dir)
+        x = self.ssm(x)
         x = self.drop(jax.nn.gelu(x), key=dropkey1)
         x = jax.vmap(self.glu)(x)
         x = self.drop(x, key=dropkey2)
         x = skip + x
-
-        # Save activations
-        if save_dir is not None:
-            jnp.save(save_dir + "activations.npy", x)
 
         return x, state
 
@@ -451,98 +384,21 @@ class LinOSS(eqx.Module):
         self.discretization = discretization
         self.damping = damping
 
-    def __call__(self, x, state, key, save_dir=None, save_params_dir=None):
+    def __call__(self, x, state, key):
         """Compute LinOSS."""
         dropkeys = jr.split(key, len(self.blocks))
         x = jax.vmap(self.linear_encoder)(x)
 
-        if save_dir is not None:
-            os.makedirs(save_dir, exist_ok=True)
-            jnp.save(save_dir + "/input.npy", x)
-
-        for i, (block, key) in enumerate(zip(self.blocks, dropkeys)):
-            if save_dir is not None:
-                block_dir = save_dir + f"/block_{i}/"
-                os.makedirs(block_dir, exist_ok=True)
-                x, state = block(x, state, key=key, save_dir=block_dir)
-            else:
-                x, state = block(x, state, key=key, save_dir=None)
+        for block, key in zip(self.blocks, dropkeys):
+            x, state = block(x, state, key=key)
 
         if self.classification:
             x = jnp.mean(x, axis=0)
-            if save_dir is not None:
-                jnp.save(save_dir + "/output.npy", self.linear_layer(x))
             x = jax.nn.softmax(self.linear_layer(x), axis=0)
         else:
             x = x[self.output_step - 1 :: self.output_step]
             x = jax.vmap(self.linear_layer)(x)
-            if save_dir is not None:
-                jnp.save(save_dir + "/output.npy", x)
             if not self.linear_output:
                 x = jax.nn.tanh(x)
 
-        if save_params_dir is not None:
-            self.save_params(save_params_dir)
-
         return x, state
-
-    def save_params(self, save_dir):
-        """Saves parameters as directory tree"""
-        os.makedirs(save_dir + "/input/", exist_ok=True)
-        os.makedirs(save_dir + "/output/", exist_ok=True)
-        jnp.save(save_dir + "/input/weight.npy", self.linear_encoder.weight)
-        jnp.save(save_dir + "/input/bias.npy", self.linear_encoder.bias)
-        jnp.save(save_dir + "/output/weight.npy", self.linear_layer.weight)
-        jnp.save(save_dir + "/output/bias.npy", self.linear_layer.bias)
-
-        for i, block in enumerate(self.blocks):
-            os.makedirs(save_dir + f"/block_{i}/glu/w1/", exist_ok=True)
-            os.makedirs(save_dir + f"/block_{i}/glu/w2/", exist_ok=True)
-            jnp.save(save_dir + f"/block_{i}/glu/w1/weight.npy", block.glu.w1.weight)
-            jnp.save(save_dir + f"/block_{i}/glu/w1/bias.npy", block.glu.w1.bias)
-            jnp.save(save_dir + f"/block_{i}/glu/w2/weight.npy", block.glu.w2.weight)
-            jnp.save(save_dir + f"/block_{i}/glu/w2/bias.npy", block.glu.w2.bias)
-
-            steps = nn.sigmoid(block.ssm.steps)
-            B_complex = block.ssm.B[..., 0] + 1j * block.ssm.B[..., 1]
-            C_complex = block.ssm.C[..., 0] + 1j * block.ssm.C[..., 1]
-            D = jnp.diag(block.ssm.D)
-
-            if self.discretization == "IM":
-                if self.damping:
-                    raise NotImplementedError(
-                        "Discretization {} and damping = {} not implemented".format(
-                            self.discretization, self.damping
-                        )
-                    )
-                else:
-                    A_diag = nn.relu(block.ssm.A_diag)
-                    M = make_linoss_im_recurrence(A_diag, steps)
-            elif self.discretization == "IMEX":
-                if self.damping:
-                    G_diag = nn.relu(block.ssm.G_diag)
-                    A_boundary_low = (
-                        2 + steps * G_diag - 2 * jnp.sqrt(1 + steps * G_diag)
-                    ) / steps**2
-                    A_boundary_high = (
-                        2 + steps * G_diag + 2 * jnp.sqrt(1 + steps * G_diag)
-                    ) / steps**2
-                    A_diag = (
-                        A_boundary_low
-                        + nn.relu(block.ssm.A_diag - A_boundary_low)
-                        - nn.relu(block.ssm.A_diag - A_boundary_high)
-                    )
-                    M = make_damped_linoss_imex_recurrence(A_diag, G_diag, steps)
-                else:
-                    A_diag = nn.relu(block.ssm.A_diag)
-                    M = make_linoss_imex_recurrence(A_diag, steps)
-            else:
-                raise NotImplementedError(
-                    "Discretization {} not implemented".format(self.discretization)
-                )
-
-            jnp.save(save_dir + f"/block_{i}/M.npy", M)
-            jnp.save(save_dir + f"/block_{i}/B.npy", B_complex)
-            jnp.save(save_dir + f"/block_{i}/C.npy", C_complex)
-            jnp.save(save_dir + f"/block_{i}/D.npy", D)
-            jnp.save(save_dir + f"/block_{i}/steps.npy", steps)
