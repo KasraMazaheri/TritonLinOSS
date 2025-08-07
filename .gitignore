@@ -1,8 +1,4 @@
 /analysis/
-/outputs/
-/results/
-/saves/
 /data/
-/figures/
-/config/human/
+/experiments/
 __pycache__/
