@@ -19,7 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 if __name__ == "__main__":
-    experiment_folder = str(BASE_DIR) + "/experiments/LinOSS/PPG/"
+    experiment_folder = str(BASE_DIR) + "/experiments/D-LinOSS/PPG/"
     model_name = "LinOSS"
     dataset_name = "PPG"
 
@@ -38,7 +38,7 @@ if __name__ == "__main__":
             "seed": se,
             "model_name": "LinOSS",
             "dataset_name": "PPG",
-            "data_dir": "/home/jaredb/drl/linoss/data/",
+            "data_dir": "/lustre/home/jboyer/linoss/data",
             "lr": lr,
             "num_steps": 100000,
             "print_steps": 1000,
@@ -50,7 +50,7 @@ if __name__ == "__main__":
             "time_duration": 1.0,
             "tanh_output": False,
             "output_step": 128,
-            "layer_name": "IM",
+            "layer_name": "Damped",
             "num_blocks": nb,
             "state_dim": sd,
             "hidden_dim": hd,

@@ -10,30 +10,30 @@ This repository is implemented in python 3.10 and uses Jax as the machine learni
 
 ### Environment
 
-The code for preprocessing the datasets, training LinOSS, S5, LRU, NCDE, NRDE, and Log-NCDE uses the following packages:
-- `jax` and `jaxlib` for automatic differentiation.
-- `equinox` for constructing neural networks.
-- `optax` for neural network optimisers.
-- `sktime` for handling time series data in ARFF format.
-- `matplotlib` for plotting.
+This project uses `uv` as the Python package manager and environment tool.
 
+Installation:
 ```
-conda create -n linoss python=3.10
-conda activate linoss
-conda install sktime matplotlib -c conda-forge
-pip install -U "jax[cuda12]" equinox==0.13.0 optax==0.2.5
+curl -Ls https://astral.sh/uv/install.sh | sh
 ```
 
-Jax and jaxlib version 0.6.2 were used at the time of experimentation.
+Configuring the linoss environment:
+```
+cd linoss/
+uv install
+```
+This will create a virtual environment in `linoss/.venv`.
 
-If running `scripts/data/process_uea.py` throws this error: No module named 'packaging'
-Then run: `pip install packaging`
+Use `uv run` instead of `python` when running scripts.
+
+If running `scripts/process_uea.py` throws this error: No module named 'packaging'
+Then run: `uv pip install packaging`
 
 ---
 
 ## Data
 
-The folder `scripts/data` contains the scripts for downloading data, preprocessing the data, and creating dataloaders and datasets. Raw data should be downloaded into the `data/raw` folder. Processed data should be saved into the `data/processed` folder in the following format: 
+The folder `scripts` contains the scripts for downloading data, preprocessing the data, and creating dataloaders and datasets. Raw data should be downloaded into the `data/raw` folder. Processed data should be saved into the `data/processed` folder in the following format: 
 ```
 processed/{collection}/{dataset_name}/data.pkl, 
 processed/{collection}/{dataset_name}/labels.pkl,
@@ -43,11 +43,11 @@ where data.pkl and labels.pkl are jnp.arrays with shape (n_samples, n_timesteps,
 
 ### The UEA Datasets
 
-The UEA datasets are a collection of multivariate time series classification benchmarks. They can be downloaded by running `scripts/data/download_uea.py` and preprocessed by running `scripts/data/process_uea.py`.
+The UEA datasets are a collection of multivariate time series classification benchmarks. They can be downloaded by running `scripts/download_uea.py` and preprocessed by running `scripts/process_uea.py`.
 
 ### The PPG-DaLiA Dataset
 
-The PPG-DaLiA dataset is a multivariate time series regression dataset, where the aim is to predict a person’s heart rate using data collected from a wrist-worn device. The dataset can be downloaded from the <a href="https://archive.ics.uci.edu/dataset/495/ppg+dalia">UCI Machine Learning Repository</a>. The data should be unzipped and saved in the `data/raw` folder in the following format `PPG_FieldStudy/S{i}/S{i}.pkl`. The data can be preprocessed by running the `scripts/data/process_ppg.py` script.
+The PPG-DaLiA dataset is a multivariate time series regression dataset, where the aim is to predict a person’s heart rate using data collected from a wrist-worn device. The dataset can be downloaded from the <a href="https://archive.ics.uci.edu/dataset/495/ppg+dalia">UCI Machine Learning Repository</a>. The data should be unzipped and saved in the `data/raw` folder in the following format `PPG_FieldStudy/S{i}/S{i}.pkl`. The data can be preprocessed by running the `scripts/process_ppg.py` script.
 
 ### The Weather Dataset
 
@@ -57,7 +57,12 @@ The PPG-DaLiA dataset is a multivariate time series regression dataset, where th
 
 ## Experiments
 
-The code for training and evaluating the models is contained in `linoss/train.py`. Experiments can be run using the `scripts/run_experiment.py` script. This script requires you to specify a folder containing hyperparameter spreads for a given experiment. These experiment folders can be generated using `scripts/create_experiment.py`.
+The code for training and evaluating the models is contained in `linoss/train.py`. Experiments can be run using the `run_experiment.py` script. This script requires you to specify a folder containing hyperparameter spreads for a given experiment. These experiment folders can be generated using `create_experiment.py`.
+
+To view the outputs of an experiment:
+```
+uv run process_results.py <experiment_folder>
+```
 
 ---
 
@@ -66,9 +71,7 @@ The code for training and evaluating the models is contained in `linoss/train.py
 (TODO: re-running experiments with new codebase)
 
 ```
-python scripts/run_experiments --experiment_folder experiments/D-LinOSS/PPG
+uv run run_experiments.py --experiment_folder experiments/D-LinOSS/PPG
 ```
-
-(TODO: explain post-processing)
 
 ---
