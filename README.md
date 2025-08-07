@@ -20,7 +20,7 @@ curl -Ls https://astral.sh/uv/install.sh | sh
 Configuring the linoss environment:
 ```
 cd linoss/
-uv install
+uv sync
 ```
 This will create a virtual environment in `linoss/.venv`.
 
