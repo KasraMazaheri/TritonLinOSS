@@ -17,8 +17,6 @@ The module also includes:
 - Utility functions for initialising and discretising the state space model components,
   such as `make_HiPPO`, `make_NPLR_HiPPO`, and `make_DPLR_HiPPO`.
 """
-
-import os
 from typing import List
 
 import equinox as eqx
@@ -28,7 +26,7 @@ import jax.random as jr
 from jax.nn.initializers import lecun_normal, normal
 from jax.scipy.linalg import block_diag
 
-from linoss.models.LRU import GLU
+from linoss.models.common import GLU
 
 
 def make_HiPPO(N):
@@ -272,19 +270,18 @@ class S5Layer(eqx.Module):
     C: jax.Array
     D: jax.Array
     log_step: jax.Array
-
     H: int
     P: int
     conj_sym: bool
-    clip_eigs: bool = False
+    clip_eigs: bool
     discretization: str
-    step_rescale: float = 1.0
+    step_rescale: float
 
     def __init__(
         self,
-        ssm_size,
-        blocks,
-        H,
+        state_dim,
+        hidden_dim,
+        ssm_blocks,
         C_init,
         conj_sym,
         clip_eigs,
@@ -298,15 +295,15 @@ class S5Layer(eqx.Module):
 
         B_key, C_key, D_key, step_key, key = jr.split(key, 5)
 
-        block_size = int(ssm_size / blocks)
+        block_size = int(state_dim / ssm_blocks)
         # Initialize state matrix A using approximation to HiPPO-LegS matrix
         Lambda, _, B, V, B_orig = make_DPLR_HiPPO(block_size)
 
         if conj_sym:
             block_size = block_size // 2
-            P = ssm_size // 2
+            P = state_dim // 2
         else:
-            P = ssm_size
+            P = state_dim
 
         Lambda = Lambda[:block_size]
         V = V[:, :block_size]
@@ -314,11 +311,11 @@ class S5Layer(eqx.Module):
 
         # If initializing state matrix A as block-diagonal, put HiPPO approximation
         # on each block
-        Lambda = (Lambda * jnp.ones((blocks, block_size))).ravel()
-        V = block_diag(*([V] * blocks))
-        Vinv = block_diag(*([Vc] * blocks))
+        Lambda = (Lambda * jnp.ones((ssm_blocks, block_size))).ravel()
+        V = block_diag(*([V] * ssm_blocks))
+        Vinv = block_diag(*([Vc] * ssm_blocks))
 
-        self.H = H
+        self.H = hidden_dim
         self.P = P
         if conj_sym:
             local_P = 2 * P
@@ -357,7 +354,7 @@ class S5Layer(eqx.Module):
         self.step_rescale = step_rescale
         self.discretization = discretization
 
-    def __call__(self, input_sequence, save_dir=None):
+    def __call__(self, input_sequence):
         if self.clip_eigs:
             Lambda = jnp.clip(self.Lambda_re, None, -1e-4) + 1j * self.Lambda_im
         else:
@@ -386,15 +383,10 @@ class S5Layer(eqx.Module):
         Du = jax.vmap(lambda u: self.D * u)(input_sequence)
         xs = Cy + Du
 
-        if save_dir is not None:
-            jnp.save(save_dir + "ssm_states.npy", ys)
-            jnp.save(save_dir + "ssm_outputs.npy", xs)
-
         return xs
 
 
 class S5Block(eqx.Module):
-
     norm: eqx.nn.BatchNorm
     ssm: S5Layer
     glu: GLU
@@ -402,9 +394,9 @@ class S5Block(eqx.Module):
 
     def __init__(
         self,
-        ssm_size,
-        blocks,
-        H,
+        state_dim,
+        hidden_dim,
+        ssm_blocks,
         C_init,
         conj_sym,
         clip_eigs,
@@ -412,18 +404,18 @@ class S5Block(eqx.Module):
         dt_min,
         dt_max,
         step_rescale,
-        drop_rate=0.05,
+        drop_rate,
         *,
         key,
     ):
         ssmkey, glukey = jr.split(key, 2)
         self.norm = eqx.nn.BatchNorm(
-            input_size=H, axis_name="batch", channelwise_affine=False
+            input_size=hidden_dim, axis_name="batch", channelwise_affine=False, mode="batch"
         )
         self.ssm = S5Layer(
-            ssm_size,
-            blocks,
-            H,
+            state_dim,
+            hidden_dim,
+            ssm_blocks,
             C_init,
             conj_sym,
             clip_eigs,
@@ -433,24 +425,20 @@ class S5Block(eqx.Module):
             step_rescale,
             key=ssmkey,
         )
-        self.glu = GLU(H, H, key=glukey)
+        self.glu = GLU(hidden_dim, hidden_dim, key=glukey)
         self.drop = eqx.nn.Dropout(p=drop_rate)
 
-    def __call__(self, x, state, *, key, save_dir=None):
-        """Compute S5 block."""
+    def __call__(self, x, state, *, key):
         dropkey1, dropkey2 = jr.split(key, 2)
         skip = x
         x, state = self.norm(x.T, state)
         x = x.T
-        x = self.ssm(x, save_dir=save_dir)
-        x = self.drop(jax.nn.gelu(x), key=dropkey1)
+        x = self.ssm(x)
+        x = jax.nn.gelu(x)
+        x = self.drop(x, key=dropkey1)
         x = jax.vmap(self.glu)(x)
         x = self.drop(x, key=dropkey2)
         x = skip + x
-
-        # Save activations
-        if save_dir is not None:
-            jnp.save(save_dir + "activations.npy", x)
 
         return x, state
 
@@ -458,46 +446,46 @@ class S5Block(eqx.Module):
 class S5(eqx.Module):
     linear_encoder: eqx.nn.Linear
     blocks: List[S5Block]
-    linear_layer: eqx.nn.Linear
+    linear_decoder: eqx.nn.Linear
     classification: bool
-    linear_output: bool
+    tanh_output: bool
     output_step: int
-    discretization: str
     stateful: bool = True
     nondeterministic: bool = True
     lip2: bool = False
 
     def __init__(
         self,
-        num_blocks,
-        N,
-        ssm_size,
-        ssm_blocks,
-        H,
+        input_dim,
+        state_dim,
+        hidden_dim,
         output_dim,
+        num_blocks,
         classification,
-        linear_output,
+        tanh_output,
         output_step,
-        C_init,
-        conj_sym,
-        clip_eigs,
-        discretization,
-        dt_min,
-        dt_max,
-        step_rescale,
+        ssm_blocks,
+        C_init="lecun_normal",
+        conj_sym=False,
+        clip_eigs=True,
+        discretization="zoh",
+        dt_min=0.001,
+        dt_max=0.1,
+        step_rescale=1.0,
+        drop_rate=0.1,
         *,
         key,
     ):
 
-        linear_encoder_key, *block_keys, linear_layer_key, weightkey = jr.split(
-            key, num_blocks + 3
+        linear_encoder_key, *block_keys, linear_decoder_key = jr.split(
+            key, num_blocks + 2
         )
-        self.linear_encoder = eqx.nn.Linear(N, H, key=linear_encoder_key)
+        self.linear_encoder = eqx.nn.Linear(input_dim, hidden_dim, key=linear_encoder_key)
         self.blocks = [
             S5Block(
-                ssm_size,
+                state_dim,
+                hidden_dim,
                 ssm_blocks,
-                H,
                 C_init,
                 conj_sym,
                 clip_eigs,
@@ -505,84 +493,31 @@ class S5(eqx.Module):
                 dt_min,
                 dt_max,
                 step_rescale,
+                drop_rate,
                 key=key,
             )
             for key in block_keys
         ]
-        self.linear_layer = eqx.nn.Linear(H, output_dim, key=linear_layer_key)
+        self.linear_decoder = eqx.nn.Linear(hidden_dim, output_dim, key=linear_decoder_key)
         self.classification = classification
-        self.linear_output = linear_output
+        self.linear_output = tanh_output
         self.output_step = output_step
-        self.discretization = discretization
 
-    def __call__(self, x, state, key, save_dir=None):
-        """Compute S5."""
+    def __call__(self, x, state, key):
         dropkeys = jr.split(key, len(self.blocks))
         x = jax.vmap(self.linear_encoder)(x)
 
-        if save_dir is not None:
-            os.makedirs(save_dir, exist_ok=True)
-            jnp.save(save_dir + "/input.npy", x)
-
-        for i, (block, key) in enumerate(zip(self.blocks, dropkeys)):
-            if save_dir is not None:
-                block_dir = save_dir + f"/block_{i}/"
-                os.makedirs(block_dir, exist_ok=True)
-                x, state = block(x, state, key=key, save_dir=block_dir)
-            else:
-                x, state = block(x, state, key=key, save_dir=None)
+        for block, key in zip(self.blocks, dropkeys):
+            x, state = block(x, state, key=key)
 
         if self.classification:
             x = jnp.mean(x, axis=0)
-            if save_dir is not None:
-                jnp.save(save_dir + "/output.npy", self.linear_layer(x))
-            x = jax.nn.softmax(self.linear_layer(x), axis=0)
+            x = self.linear_decoder(x)
+            x = jax.nn.softmax(x, axis=0)
         else:
             x = x[self.output_step - 1 :: self.output_step]
-            if save_dir is not None:
-                jnp.save(save_dir + "/output.npy", jax.vmap(self.linear_layer)(x))
-            x = jax.vmap(self.linear_layer)(x)
-            if not self.linear_layer:
+            x = jax.vmap(self.linear_decoder)(x)
+            if self.tanh_output:
                 x = jax.nn.tanh(x)
 
         return x, state
-
-    def save_params(self, save_dir):
-        """Saves parameters as directory tree"""
-        os.makedirs(save_dir + "/input/", exist_ok=True)
-        os.makedirs(save_dir + "/output/", exist_ok=True)
-        jnp.save(save_dir + "/input/weight.npy", self.linear_encoder.weight)
-        jnp.save(save_dir + "/input/bias.npy", self.linear_encoder.bias)
-        jnp.save(save_dir + "/output/weight.npy", self.linear_layer.weight)
-        jnp.save(save_dir + "/output/bias.npy", self.linear_layer.bias)
-
-        for i, block in enumerate(self.blocks):
-            os.makedirs(save_dir + f"/block_{i}/glu/w1/", exist_ok=True)
-            os.makedirs(save_dir + f"/block_{i}/glu/w2/", exist_ok=True)
-            jnp.save(save_dir + f"/block_{i}/glu/w1/weight.npy", block.glu.w1.weight)
-            jnp.save(save_dir + f"/block_{i}/glu/w1/bias.npy", block.glu.w1.bias)
-            jnp.save(save_dir + f"/block_{i}/glu/w2/weight.npy", block.glu.w2.weight)
-            jnp.save(save_dir + f"/block_{i}/glu/w2/bias.npy", block.glu.w2.bias)
-
-            Lambda = block.ssm.Lambda_re + 1j * block.ssm.Lambda_im
-            B_tilde = block.ssm.B[..., 0] + 1j * block.ssm.B[..., 1]
-            C_tilde = block.ssm.C[..., 0] + 1j * block.ssm.C[..., 1]
-            step = block.ssm.step_rescale * jnp.exp(block.ssm.log_step[:, 0])
-
-            # Discretize
-            if self.discretization in ["zoh"]:
-                Lambda_bar, B_bar = discretize_zoh(Lambda, B_tilde, step)
-            elif self.discretization in ["bilinear"]:
-                Lambda_bar, B_bar = discretize_bilinear(Lambda, B_tilde, step)
-            else:
-                raise NotImplementedError(
-                    "Discretization method {} not implemented".format(
-                        self.discretization
-                    )
-                )
-
-            jnp.save(save_dir + f"/block_{i}/M.npy", jnp.diag(Lambda_bar))
-            jnp.save(save_dir + f"/block_{i}/B.npy", B_bar)
-            jnp.save(save_dir + f"/block_{i}/C.npy", C_tilde)
-            jnp.save(save_dir + f"/block_{i}/D.npy", jnp.diag(block.ssm.D))
-            jnp.save(save_dir + f"/block_{i}/steps.npy", step)
