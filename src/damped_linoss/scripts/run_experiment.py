@@ -19,7 +19,7 @@ import yaml
 import equinox as eqx
 import argparse
 
-from linoss.train import create_dataset_model_and_train
+from damped_linoss.train import create_dataset_model_and_train
 
 
 def run_experiments(

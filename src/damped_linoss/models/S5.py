@@ -26,7 +26,7 @@ import jax.random as jr
 from jax.nn.initializers import lecun_normal, normal
 from jax.scipy.linalg import block_diag
 
-from linoss.models.common import GLU
+from damped_linoss.models.common import GLU
 
 
 def make_HiPPO(N):

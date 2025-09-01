@@ -35,8 +35,8 @@ import jax.tree_util as jtu
 import optax
 import equinox as eqx
 
-from linoss.data.create_dataset import create_dataset
-from linoss.models.create_model import create_model
+from damped_linoss.data.create_dataset import create_dataset
+from damped_linoss.models.create_model import create_model
 
 # Ignore warning in loss fn calculation
 warnings.simplefilter("ignore", category=jnp.ComplexWarning)

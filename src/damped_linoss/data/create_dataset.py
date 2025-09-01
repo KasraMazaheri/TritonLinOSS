@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.nn
 
-from linoss.data.dataloader import BaseDataloader, StandardDataloader, BucketedDataloader
+from damped_linoss.data.dataloader import BaseDataloader, StandardDataloader, BucketedDataloader
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -648,9 +648,9 @@ def create_dataset(
     in_memory=False,
     key=None,
 ):
-    if name in get_subfolders(data_dir + "/processed/UEA"):
+    if name in get_subfolders(os.path.join(data_dir, "processed", "UEA")):
         data, labels, data_out_func = load_UEA_dataset(name, data_dir)
-    elif name in get_subfolders(data_dir + "/processed/SE3"):
+    elif name in get_subfolders(os.path.join(data_dir, "processed", "SE3")):
         data, labels, data_out_func = load_SE3_dataset(name, data_dir)
     elif name == "Mocap":
         data, labels, data_out_func = load_Mocap_dataset(data_dir)

@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx
 
-from linoss.models.common import GLU
+from damped_linoss.models.common import GLU
 
 
 class _AbstractRNNCell(eqx.Module):

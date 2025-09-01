@@ -22,7 +22,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
-from linoss.models.common import GLU
+from damped_linoss.models.common import GLU
 
 
 def binary_operator_diag(element_i, element_j):

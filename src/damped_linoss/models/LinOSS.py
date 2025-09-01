@@ -6,7 +6,7 @@ from jax import nn
 from jax.nn.initializers import normal
 import equinox as eqx
 
-from linoss.models.common import GLU, simple_uniform_init
+from damped_linoss.models.common import GLU, simple_uniform_init
 
 
 # Parallel scan operations
