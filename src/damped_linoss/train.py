@@ -42,6 +42,14 @@ from damped_linoss.models.create_model import create_model
 warnings.simplefilter("ignore", category=jnp.ComplexWarning)
 
 
+def count_params(model):
+    leaves, _ = jax.tree_util.tree_flatten(model)
+    param_leaves = [leaf for leaf in leaves if isinstance(leaf, jnp.ndarray)]
+    num_params = sum(leaf.size for leaf in param_leaves)
+    num_bytes = sum(leaf.size * leaf.dtype.itemsize for leaf in param_leaves)
+    return num_params, num_bytes
+
+
 def safe_load(data, key, dtype=None):
     val = data.get(key, None)
     if val is None:
@@ -98,6 +106,7 @@ def make_step(model, X, y, loss_fn, state, opt, opt_state, key):
     return model, state, opt_state, value
 
 
+@eqx.filter_jit
 def evaluate(inference_model, state, dataloader_iter, key):
     predictions = []
     labels = []
@@ -130,114 +139,106 @@ def train_model(
     model,
     state,
     dataset,
-    metric: str,
+    classification: bool,
     num_steps: int,
     print_steps: int,
     lr: float,
     batch_size: int,
     key: jax.Array,
 ):
-    if metric == "accuracy":
-        best_val = max
-        operator_improv = lambda x, y: x >= y
-        operator_no_improv = lambda x, y: x <= y
-    elif metric == "mse":
-        best_val = min
-        operator_improv = lambda x, y: x <= y
-        operator_no_improv = lambda x, y: x >= y
-    else:
-        raise ValueError(f"Unknown metric: {metric}")
-
+    # Initialize model optimizer
     batchkey, key = jr.split(key, 2)
     opt = optax.adam(learning_rate=lr)
     opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
+    
+    # Model saving
+    model_filename = os.path.join(run_folder, "model.eqx")
+    state_filename = os.path.join(run_folder, "state.eqx")
+    def copy_tree(tree, temp_file):
+        eqx.tree_serialise_leaves(temp_file, tree)
+        return eqx.tree_deserialise_leaves(temp_file, tree)
+    best_model = copy_tree(model, model_filename)
+    best_state = copy_tree(state, state_filename)
 
-    if model.classification:
+    # Classification vs. Regression
+    if classification:
+        improvement = lambda x, y: x >= y
         loss_fn = classification_loss
+        best_val_metric = -jnp.inf
     else:
+        improvement = lambda x, y: x <= y
         loss_fn = regression_loss
+        best_val_metric = jnp.inf
 
+    running_losses = []
+    val_metrics = []
+    step_times = []
     running_loss = 0.0
-    if metric == "accuracy":
-        all_val_metric = [0.0]
-        all_train_metric = [0.0]
-        val_metric_for_best_model = [0.0]
-        test_metric = jnp.nan
-    elif metric == "mse":
-        all_val_metric = [100.0]
-        all_train_metric = [100.0]
-        val_metric_for_best_model = [100.0]
-        test_metric = jnp.nan
-    no_val_improvement = 0
-    all_time = []
+    counter = 0
     start = time.time()
-
-    best_model = jtu.tree_map(lambda x: x, model)
-    best_state = jtu.tree_map(lambda x: x, state)
-
     for step, data in zip(
         range(num_steps),
         dataset.dataloaders["train"].loop(batch_size, key=batchkey),
     ):
         # Make step
         X, y = data
-        stepkey, key = jr.split(key, 2)
-        model, state, opt_state, value = make_step(model, X, y, loss_fn, state, opt, opt_state, stepkey)
+        step_key, key = jr.split(key, 2)
+        model, state, opt_state, value = make_step(model, X, y, loss_fn, state, opt, opt_state, step_key)
         running_loss += value
 
-        # Evaluation
+        # Evaluation @ print_step
         if (step + 1) % print_steps == 0:
-            train_key, val_key, test_key, key = jr.split(key, 4)
-            inference_model = eqx.tree_inference(model, value=True)
-            train_iter = dataset.dataloaders["train"].loop_epoch(batch_size)
-            val_iter = dataset.dataloaders["val"].loop_epoch(batch_size)
-            train_metric = evaluate(inference_model, state, train_iter, train_key)
-            val_metric = evaluate(inference_model, state, val_iter, val_key)
-
-            # Print status
             end = time.time()
             total_time = end - start
+
+            # Validation metrics
+            val_key, key = jr.split(key, 2)
+            inference_model = eqx.tree_inference(model, value=True)
+            val_iter = dataset.dataloaders["val"].loop_epoch(batch_size)
+            val_metric = evaluate(inference_model, state, val_iter, val_key)
             print(
-                f"Step: {step + 1}, Loss: {running_loss / print_steps}, "
-                f"Train metric: {train_metric}, "
-                f"Validation metric: {val_metric}, Time: {total_time}"
+                f"Step: {step + 1}, "
+                f"Loss: {running_loss / print_steps}, "
+                f"Validation metric: {val_metric}, "
+                f"Time: {total_time}"
             )
-            start = time.time()
+            running_losses.append(running_loss / print_steps)
+            val_metrics.append(val_metric)
+            step_times.append(total_time)
             running_loss = 0.0
 
             # Improvement checking / early stopping
-            if operator_no_improv(val_metric, best_val(val_metric_for_best_model)):
-                no_val_improvement += 1
-                if no_val_improvement > 10:
-                    break
+            if improvement(val_metric, best_val_metric):
+                counter = 0
+                best_val_metric = val_metric
+                best_model = copy_tree(model, model_filename)
+                best_state = copy_tree(state, state_filename)
             else:
-                no_val_improvement = 0
-            if operator_improv(val_metric, best_val(val_metric_for_best_model)):
-                best_model = jtu.tree_map(lambda x: x, model)
-                best_state = jtu.tree_map(lambda x: x, state)
-                val_metric_for_best_model.append(val_metric)
-                test_iter = dataset.dataloaders["test"].loop_epoch(batch_size)
-                test_metric = evaluate(inference_model, state, test_iter, test_key)
-                print(f"Test metric: {test_metric}")
+                counter += 1
+                if counter >= 10:
+                    print("--- Early Stopping. ---")
+                    break
 
-            # Log results
-            all_time.append(total_time)
-            all_train_metric.append(train_metric)
-            all_val_metric.append(val_metric)
+            start = time.time()
 
-            log_data = jnp.stack([
-                jnp.arange(0, step + 2, print_steps)[1:],
-                jnp.array(all_time),
-                jnp.array(all_train_metric[1:]),
-                jnp.array(all_val_metric[1:])
-            ], axis=1)
-            jnp.save(run_folder+ "/log_metrics.npy", log_data)
+    # Compute test metric
+    test_key, key = jr.split(key, 2)
+    best_inference_model = eqx.tree_inference(best_model, value=True)
+    test_iter = dataset.dataloaders["test"].loop_epoch(batch_size)
+    test_metric = evaluate(best_inference_model, best_state, test_iter, test_key)
+
+    print(f"Test metric: {test_metric}")
+    with open(os.path.join(run_folder, "test_metric.txt"), "w") as f:
+        f.write(str(test_metric))
 
     # Log final results
-    print(f"Test metric: {test_metric}")
-    f = open(run_folder + "/results.txt", "a")
-    f.write(str(test_metric) + "\n")
-    f.close()
+    log_data = jnp.stack([
+        jnp.arange(print_steps, (len(val_metrics) + 1) * print_steps, print_steps)
+        jnp.array(step_times),
+        jnp.array(running_losses),
+        jnp.array(val_metrics)
+    ], axis=1)
+    jnp.save(os.path.join(run_folder, "log_metrics.npy"), log_data)
 
     return best_model, best_state
 
@@ -257,15 +258,17 @@ def create_dataset_model_and_train(
             print(f"Deleted: {file}")
 
     delete_file_if_exists(run_folder + "/metadata.txt")
-    delete_file_if_exists(run_folder + "/results.txt")
+    delete_file_if_exists(run_folder + "/test_metric.txt")
     delete_file_if_exists(run_folder + "/log_metrics.npy")
     delete_file_if_exists(run_folder + "/model.eqx")
     delete_file_if_exists(run_folder + "/state.eqx")
 
-    f = open(run_folder + "/metadata.txt", "a")
-    f.write(f'Time of execution: {datetime.now().strftime("%Y%m%d_%H%M%S")} \n')
-    f.write("log_metrics.npy columns: [step, time, train metric, val metric] \n")
-    f.close()
+    # Report metadata
+    with open(os.path.join(run_folder, "metadata.txt"), "w") as f:
+        n_params, n_bytes = count_params(model)
+        f.write(f"Experiment conducted at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} \n")
+        f.write(f"# of Parameters: {n_params:,} \n")
+        f.write(f"Memory: {n_bytes/1024/1024:.2f} MiB")
 
     print(f"Creating dataset {dataset_name}")
     dataset = create_dataset(
@@ -289,7 +292,7 @@ def create_dataset_model_and_train(
         model,
         state,
         dataset,
-        metric=safe_load(hyperparameters, "metric", str),
+        classification=safe_load(hyperparameters, "classification", bool),
         num_steps=safe_load(hyperparameters, "num_steps", int),
         print_steps=safe_load(hyperparameters, "print_steps", int),
         lr=safe_load(hyperparameters, "lr", float),
