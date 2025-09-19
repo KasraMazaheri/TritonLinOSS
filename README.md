@@ -17,9 +17,9 @@ Installation:
 curl -Ls https://astral.sh/uv/install.sh | sh
 ```
 
-Configuring the linoss environment:
+Configuring the damped-linoss environment:
 ```
-cd linoss/
+cd damped-linoss/
 uv sync
 ```
 This will create a virtual environment in `linoss/.venv`.

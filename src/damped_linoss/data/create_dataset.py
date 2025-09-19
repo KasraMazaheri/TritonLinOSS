@@ -335,6 +335,7 @@ def load_NoisyCifar10_dataset():
     dataset_test = torchvision.datasets.CIFAR10(
         download_dir,
         train=False,
+        download=True,
     )
     num_classes = 10
 
@@ -383,6 +384,70 @@ def load_NoisyCifar10_dataset():
         return noisy_batch
 
     return data, labels, data_out_func
+
+
+def create_SequentialCifar10_dataset():
+    """
+    Flattened RGB Cifar
+    """
+    try:
+        import torchvision
+    except:
+        raise RuntimeError("Must have tensorflow installed to load Cifar10 dataset.")
+
+    # Transform: ToTensor + Normalize + Reshape to (1024, 3)
+    transform = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),  # (32,32,3) -> (3,32,32) and /255
+        torchvision.transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        torchvision.transforms.Lambda(lambda x: x.view(3, 1024).t())  # (3,32,32) -> (1024,3)
+    ])
+
+    download_dir = BASE_DIR / "data" / "raw" / "sequential_cifar"
+    trainset = torchvision.datasets.CIFAR10(
+        root=download_dir, train=True, download=True, transform=transform)
+    testset = torchvision.datasets.CIFAR10(
+        root=download_dir, train=False, download=True, transform=transform)
+
+    # Apply transforms by iterating through dataset
+    x_train = []
+    y_train = []
+    for i in range(len(trainset)):
+        img, label = trainset[i]  # This applies the transform!
+        x_train.append(img.numpy())
+        y_train.append(label)
+    
+    x_test = []
+    y_test = []
+    for i in range(len(testset)):
+        img, label = testset[i]  # This applies the transform!
+        x_test.append(img.numpy())
+        y_test.append(label)
+
+    # Convert lists to arrays
+    x_train = np.array(x_train)  # Shape: (50000, 1024, 3)
+    y_train = np.array(y_train)
+    x_test = np.array(x_test)    # Shape: (10000, 1024, 3)
+    y_test = np.array(y_test)
+
+    # Convert to JAX arrays
+    x_train = jnp.array(x_train)
+    x_test = jnp.array(x_test)
+    y_train = jnp.array(y_train)
+    y_test = jnp.array(y_test)
+    
+    # Create one-hot labels
+    train_onehot = jnp.zeros((len(y_train), 10))
+    train_onehot = train_onehot.at[jnp.arange(len(y_train)), y_train].set(1)
+    test_onehot = jnp.zeros((len(y_test), 10))
+    test_onehot = test_onehot.at[jnp.arange(len(y_test)), y_test].set(1)
+
+    bounds = [0.9]  # From S5
+    (x_train, x_val) = split(x_train, bounds)
+    (train_onehot, val_onehot) = split(train_onehot, bounds)
+    data = (x_train, x_val, x_test)
+    labels = (train_onehot, val_onehot, test_onehot)
+
+    return data, labels, lambda x: x
 
 
 def load_IMDb_dataset():
@@ -660,6 +725,8 @@ def create_dataset(
         data, labels, data_out_func = load_Cifar10_dataset()
     elif name == "NoisyCifar10":
         data, labels, data_out_func = load_NoisyCifar10_dataset()
+    elif name == "SequentialCifar10":
+        data, labels, data_out_func = create_SequentialCifar10_dataset()
     elif name == "IMDb":
         data, labels, data_out_func, input_dim, output_dim = load_IMDb_dataset()
     elif name == "MNIST":
