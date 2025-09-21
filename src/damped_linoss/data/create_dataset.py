@@ -9,8 +9,6 @@ import jax.nn
 
 from damped_linoss.data.dataloader import BaseDataloader, StandardDataloader, BucketedDataloader
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-
 
 # =============================================
 # SECTION: Utility functions
@@ -272,7 +270,7 @@ def load_Cifar10_dataset():
         raise RuntimeError("Must have torch/torchvision installed to load Cifar10 dataset.")
 
     # Load CIFAR-10
-    download_dir = BASE_DIR / "data" / "raw" / "cifar"
+    download_dir = "data/raw/cifar"
     dataset_train = torchvision.datasets.CIFAR10(
         download_dir,
         train=True,
@@ -326,7 +324,7 @@ def load_NoisyCifar10_dataset():
         raise RuntimeError("Must have torch/torchvision installed to load NoisyCifar10 dataset.")
 
     # Load CIFAR-10
-    download_dir = BASE_DIR / "data" / "raw" / "cifar"
+    download_dir = "data/raw/cifar"
     dataset_train = torchvision.datasets.CIFAR10(
         download_dir,
         train=True,
@@ -393,7 +391,7 @@ def create_SequentialCifar10_dataset():
     try:
         import torchvision
     except:
-        raise RuntimeError("Must have tensorflow installed to load Cifar10 dataset.")
+        raise RuntimeError("Must have torch/torchvision installed to load Cifar10 dataset.")
 
     # Transform: ToTensor + Normalize + Reshape to (1024, 3)
     transform = torchvision.transforms.Compose([
@@ -402,7 +400,7 @@ def create_SequentialCifar10_dataset():
         torchvision.transforms.Lambda(lambda x: x.view(3, 1024).t())  # (3,32,32) -> (1024,3)
     ])
 
-    download_dir = BASE_DIR / "data" / "raw" / "sequential_cifar"
+    download_dir = "data/raw/sequential_cifar"
     trainset = torchvision.datasets.CIFAR10(
         root=download_dir, train=True, download=True, transform=transform)
     testset = torchvision.datasets.CIFAR10(
@@ -465,7 +463,7 @@ def load_IMDb_dataset():
     min_freq = 15  # per S5
     num_class = 2  # positive, negative
 
-    imdb_data_dir = BASE_DIR / "data" / "raw" / "imdb"
+    imdb_data_dir = "data/raw/imdb"
     if imdb_data_dir.exists():
         # TODO load from cache
         raise NotImplementedError()
@@ -562,7 +560,7 @@ def load_MNIST_dataset():
     except:
         raise RuntimeError("Must have torch/torchvision installed to load MNIST dataset.")
 
-    download_dir = BASE_DIR / "data" / "raw" / "mnist"
+    download_dir = "data/raw/mnist"
     dataset_train = torchvision.datasets.MNIST(
         download_dir,
         train=True,
@@ -612,7 +610,7 @@ def load_sMNIST_dataset():
     except:
         raise RuntimeError("Must have torch/torchvision installed to load sMNIST dataset.")
 
-    download_dir = BASE_DIR / "data" / "raw" / "mnist"
+    download_dir = "data/raw/mnist"
     dataset_train = torchvision.datasets.MNIST(
         download_dir,
         train=True,

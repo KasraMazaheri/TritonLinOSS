@@ -14,9 +14,6 @@ import itertools
 import numpy as np
 from pathlib import Path
 
-# linoss/ directory
-BASE_DIR = Path(__file__).resolve().parent.parent
-
 
 def create_grid_experiment(experiment_folder, model_name, dataset_name):
     # Hyperparameter sweep
@@ -40,7 +37,6 @@ def create_grid_experiment(experiment_folder, model_name, dataset_name):
             "print_steps": 1000,
             "batch_size": 16,
             "classification": True,
-            "metric": "accuracy",
             "use_presplit": True,
             "include_time": tm,
             "time_duration": 1.0,
@@ -65,22 +61,28 @@ def create_grid_experiment(experiment_folder, model_name, dataset_name):
 
 def create_random_experiment(experiment_folder, model_name, dataset_name):
     # Hyperparameter sweep
-    num_runs = 100
+    num_runs = 150
     learning_rate = [1e-2, 1e-5]
     state_dim = [16, 256]
     hidden_dim = [16, 256]
     num_blocks = [2, 6]
     include_time = [False, True]
     batch_size = [4, 64]
+    r_min = [0.5, 0.99]
+    theta_max = [0.1, np.pi]
+    drop_rate = [0.0, 0.15]
 
     for i in range(num_runs):
-        se = int(np.random.randint(0, 100))
+        se = int(np.random.randint(0, num_runs))
         lr = float(np.exp(np.random.uniform(np.log(learning_rate[0]), np.log(learning_rate[1]))))
         tm = bool(np.random.choice(include_time))
         nb = int(np.random.uniform(*num_blocks))
         sd = int(np.exp(np.random.uniform(np.log(state_dim[0]), np.log(state_dim[1]))))
         hd = int(np.exp(np.random.uniform(np.log(hidden_dim[0]), np.log(hidden_dim[1]))))
         bs = int(np.random.uniform(*batch_size))
+        rm = float(np.random.uniform(*r_min))
+        th = float(np.random.uniform(*theta_max))
+        dr = float(np.random.uniform(*drop_rate))
 
         hyperparameters = {
             "seed": se,
@@ -92,7 +94,6 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
             "print_steps": 1000,
             "batch_size": bs,
             "classification": True,
-            "metric": "accuracy",
             "use_presplit": True,
             "include_time": tm,
             "time_duration": 1.0,
@@ -102,10 +103,10 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
             "num_blocks": nb,
             "state_dim": sd,
             "hidden_dim": hd,
-            "r_min": 0.9,
+            "r_min": rm,
             "r_max": 1.0,
-            "theta_max": np.pi,
-            "drop_rate": 0.1
+            "theta_max": th,
+            "drop_rate": dr
         }
 
         # Write config
@@ -118,7 +119,7 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
 if __name__ == "__main__":
     model_name = "LinOSS"
     dataset_name = "SequentialCifar10"
-    experiment_folder = str(BASE_DIR) + f"/experiments/D-LinOSS/{dataset_name}/"
+    experiment_folder = f"experiments/D-LinOSS/{dataset_name}/"
 
     # create_grid_experiment(experiment_folder, model_name, dataset_name)
     create_random_experiment(experiment_folder, model_name, dataset_name)

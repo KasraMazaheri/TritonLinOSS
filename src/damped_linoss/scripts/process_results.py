@@ -33,7 +33,7 @@ def main(exp_root):
     group_keys_to_use = ["model_name", "dataset_name", "seed", "lr", "state_dim", "hidden_dim", "num_blocks", "include_time"]
 
     # Find all results.txt in run_XXX folders under exp_root
-    pattern = os.path.join(exp_root, "run_*/results.txt")
+    pattern = os.path.join(exp_root, "run_*/test_metric.txt")
     for result_path in glob.glob(pattern, recursive=True):
         dir_path = os.path.dirname(result_path)
         hyper_path = os.path.join(dir_path, "hyperparameters.yaml")

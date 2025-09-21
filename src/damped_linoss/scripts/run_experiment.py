@@ -25,7 +25,6 @@ from damped_linoss.train import create_dataset_model_and_train
 def run_experiments(
     experiment_folder: str,
     task_id: int = 0,
-    num_tasks: int = 1,
 ):
     """
     Runs a series of training experiments.
@@ -36,26 +35,13 @@ def run_experiments(
         task_id (int): Process ID -- for batching. Defaults to 0.
         num_tasks (int): Number of processes -- for batching. Defaults to 1.
     """
-    # Load all run subfolders
-    run_folders = sorted([f.name for f in os.scandir(experiment_folder) if f.is_dir()])
+    run_folder = os.path.join(experiment_folder, f"run_{int(task_id):03d}")
+    hyperparameters_path = os.path.join(run_folder, "hyperparameters.yaml")
+    with open(hyperparameters_path, "r") as f:
+        hyperparameters = yaml.safe_load(f)
 
-    # Batching
-    num_runs = len(run_folders)
-    idxs = range(num_runs)[task_id:num_runs:num_tasks]
-    for idx in idxs:
-        run_folder = experiment_folder + "/" + run_folders[idx]
-
-        # Load hyperparameters
-        with open(run_folder + "/hyperparameters.yaml", "r") as file:
-            hyperparameters = yaml.safe_load(file)
-
-        # Train model
-        print(f"Running experiment {idx}")
-        model, state = create_dataset_model_and_train(run_folder, hyperparameters)
-
-        # Save model
-        eqx.tree_serialise_leaves(run_folder + "/model.eqx", model)
-        eqx.tree_serialise_leaves(run_folder + "/state.eqx", state)
+    # Train model
+    model, state = create_dataset_model_and_train(run_folder, hyperparameters)
 
 
 if __name__ == "__main__":
@@ -72,16 +58,9 @@ if __name__ == "__main__":
         default=0,
         help="batching: id number of process",
     )
-    parser.add_argument(
-        "--num_tasks",
-        type=int,
-        default=1,
-        help="batching: total number of processes",
-    )
     args = parser.parse_args()
 
     run_experiments(
         args.experiment_folder,
         args.task_id,
-        args.num_tasks,
     )

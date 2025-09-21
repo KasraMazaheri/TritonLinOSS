@@ -106,7 +106,6 @@ def make_step(model, X, y, loss_fn, state, opt, opt_state, key):
     return model, state, opt_state, value
 
 
-@eqx.filter_jit
 def evaluate(inference_model, state, dataloader_iter, key):
     predictions = []
     labels = []
@@ -170,6 +169,7 @@ def train_model(
         loss_fn = regression_loss
         best_val_metric = jnp.inf
 
+    print("Starting training.")
     running_losses = []
     val_metrics = []
     step_times = []
@@ -233,7 +233,7 @@ def train_model(
 
     # Log final results
     log_data = jnp.stack([
-        jnp.arange(print_steps, (len(val_metrics) + 1) * print_steps, print_steps)
+        jnp.arange(print_steps, (len(val_metrics) + 1) * print_steps, print_steps),
         jnp.array(step_times),
         jnp.array(running_losses),
         jnp.array(val_metrics)
@@ -257,18 +257,11 @@ def create_dataset_model_and_train(
             os.remove(file)
             print(f"Deleted: {file}")
 
-    delete_file_if_exists(run_folder + "/metadata.txt")
-    delete_file_if_exists(run_folder + "/test_metric.txt")
-    delete_file_if_exists(run_folder + "/log_metrics.npy")
-    delete_file_if_exists(run_folder + "/model.eqx")
-    delete_file_if_exists(run_folder + "/state.eqx")
-
-    # Report metadata
-    with open(os.path.join(run_folder, "metadata.txt"), "w") as f:
-        n_params, n_bytes = count_params(model)
-        f.write(f"Experiment conducted at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} \n")
-        f.write(f"# of Parameters: {n_params:,} \n")
-        f.write(f"Memory: {n_bytes/1024/1024:.2f} MiB")
+    delete_file_if_exists(os.path.join(run_folder, "metadata.txt"))
+    delete_file_if_exists(os.path.join(run_folder, "test_metric.txt"))
+    delete_file_if_exists(os.path.join(run_folder, "log_metrics.npy"))
+    delete_file_if_exists(os.path.join(run_folder, "model.eqx"))
+    delete_file_if_exists(os.path.join(run_folder, "state.eqx"))
 
     print(f"Creating dataset {dataset_name}")
     dataset = create_dataset(
@@ -286,7 +279,15 @@ def create_dataset_model_and_train(
         hyperparameters=hyperparameters,
         key=model_key,
     )
+    
+    # Report metadata
+    with open(os.path.join(run_folder, "metadata.txt"), "w") as f:
+        n_params, n_bytes = count_params(model)
+        f.write(f"Experiment conducted at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} \n")
+        f.write(f"# of Parameters: {n_params:,} \n")
+        f.write(f"Memory: {n_bytes/1024/1024:.2f} MiB")
 
+    # Train
     model, state = train_model(
         run_folder,
         model,
