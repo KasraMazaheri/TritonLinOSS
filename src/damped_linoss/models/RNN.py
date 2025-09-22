@@ -66,7 +66,6 @@ class BasicRNN(eqx.Module):
     output_step: int
     stateful: bool = False
     nondeterministic: bool = False
-    lip2: bool = False
 
     def __init__(
         self,
@@ -169,7 +168,6 @@ class StackedRNN(eqx.Module):
     output_step: int
     stateful: bool = True
     nondeterministic: bool = True
-    lip2: bool = False
 
     def __init__(
         self,

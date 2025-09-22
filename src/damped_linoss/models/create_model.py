@@ -99,8 +99,11 @@ def create_model(
             classification=safe_load(hyperparameters, "classification", bool),
             tanh_output=safe_load(hyperparameters, "tanh_output", bool),
             output_step=safe_load(hyperparameters, "output_step", int),
-            r_min=safe_load(hyperparameters, "r_min", float),
-            theta_max=safe_load(hyperparameters, "theta_max", float),
+            A_min=safe_load(hyperparameters, "A_min", float),
+            A_max=safe_load(hyperparameters, "A_max", float),
+            G_min=safe_load(hyperparameters, "G_min", float),
+            G_max=safe_load(hyperparameters, "G_max", float),
+            dt_std=safe_load(hyperparameters, "dt_std", float),
             drop_rate=safe_load(hyperparameters, "drop_rate", float),
             key=key,
         )

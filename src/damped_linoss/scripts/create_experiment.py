@@ -68,8 +68,8 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
     num_blocks = [2, 6]
     include_time = [False, True]
     batch_size = [4, 64]
-    r_min = [0.5, 0.99]
-    theta_max = [0.1, np.pi]
+    A_max = [1.0, 10.0]
+    G_max = [1.0, 10.0]
     drop_rate = [0.0, 0.15]
 
     for i in range(num_runs):
@@ -80,8 +80,8 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
         sd = int(np.exp(np.random.uniform(np.log(state_dim[0]), np.log(state_dim[1]))))
         hd = int(np.exp(np.random.uniform(np.log(hidden_dim[0]), np.log(hidden_dim[1]))))
         bs = int(np.random.uniform(*batch_size))
-        rm = float(np.random.uniform(*r_min))
-        th = float(np.random.uniform(*theta_max))
+        am = float(np.random.uniform(*A_max))
+        gm = float(np.random.uniform(*G_max))
         dr = float(np.random.uniform(*drop_rate))
 
         hyperparameters = {
@@ -99,13 +99,14 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
             "time_duration": 1.0,
             "tanh_output": False,
             "output_step": 1,
-            "layer_name": "Damped",
+            "layer_name": "DampedIMEX1",
             "num_blocks": nb,
             "state_dim": sd,
             "hidden_dim": hd,
-            "r_min": rm,
-            "r_max": 1.0,
-            "theta_max": th,
+            "A_min": 0.0,
+            "A_max": am,
+            "G_min": 0.0,
+            "G_max": gm,
             "drop_rate": dr
         }
 

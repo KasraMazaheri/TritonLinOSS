@@ -452,7 +452,6 @@ class S5(eqx.Module):
     output_step: int
     stateful: bool = True
     nondeterministic: bool = True
-    lip2: bool = False
 
     def __init__(
         self,
