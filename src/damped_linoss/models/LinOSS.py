@@ -366,6 +366,11 @@ class DampedIMEX1Layer(_AbstractLinOSSLayer):
         self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
 
+    def _is_valid_AGdt(self, A_diag, G_diag, dt):
+        """Boolean check if (A,G,dt) in valid region"""
+        dt = nn.sigmoid(dt)
+        return (G_diag >= 0) & (((G_diag - dt*A_diag)**2 - 4*A_diag) < 0)
+
     def _ring_init_AGdt(self, r_min, r_max, theta_min, theta_max, dt_std, key):
         # Solve symbolically
         a, g, dt, lam1, lam2 = sp.symbols('a g dt lam1 lam2')
@@ -392,6 +397,19 @@ class DampedIMEX1Layer(_AbstractLinOSSLayer):
         # Convert to (A, G) representation
         a_vals, g_vals = f(lam1_vals, lam2_vals, dt_sigmoid)
 
+        # Invertibility, stability, and validity checks
+        h1 = sp.lambdify((a, g, dt), eigs[0], "numpy")
+        h2 = sp.lambdify((a, g, dt), eigs[1], "numpy")
+        lam1_out_vals = h1(a_vals, g_vals, dt_sigmoid)
+        lam2_out_vals = h2(a_vals, g_vals, dt_sigmoid)
+        invertible = jnp.all(jnp.isclose(lam1_out_vals, lam1_vals) | jnp.isclose(jnp.conjugate(lam1_out_vals), lam1_vals)) \
+                   & jnp.all(jnp.isclose(lam2_out_vals, lam2_vals) | jnp.isclose(jnp.conjugate(lam2_out_vals), lam2_vals))
+        stable = jnp.all(jnp.abs(lam1_out_vals) < 1.0) & jnp.all(jnp.abs(lam2_out_vals) < 1.0)
+        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_sigmoid))
+        print(f"Invertibility check: {invertible}")
+        print(f"Stability check: {stable}")
+        print(f"Validity check: {valid}")
+
         return a_vals, g_vals, dt_vals
 
     def _uniform_init_AGdt(self, A_min, A_max, G_min, G_max, dt_std, key):
@@ -402,18 +420,13 @@ class DampedIMEX1Layer(_AbstractLinOSSLayer):
         G_vals = []
         dt_vals = []
 
-        def _is_valid_AGdt(A_diag, G_diag, dt):
-            """Boolean check if (A,G,dt) in valid region"""
-            dt = nn.sigmoid(dt)
-            return (G_diag >= 0) & (((G_diag - dt*A_diag)**2 - 4*A_diag) < 0)
-
         while not done:
             A_key, G_key, dt_key, key = jr.split(key, 4)
             A_diag = jr.uniform(A_key, shape=(bsz,)) * (A_max - A_min) + A_min
             G_diag = jr.uniform(G_key, shape=(bsz,)) * (G_max - G_min) + G_min
             dt = normal(stddev=dt_std)(dt_key, (bsz,))
 
-            mask = _is_valid_AGdt(A_diag, G_diag, dt)
+            mask = self._is_valid_AGdt(A_diag, G_diag, dt)
             A_vals.extend(list(A_diag[mask]))
             G_vals.extend(list(G_diag[mask]))
             dt_vals.extend(list(dt[mask]))
@@ -527,6 +540,11 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
         self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
 
+    def _is_valid_AGdt(self, A_diag, G_diag, dt):
+        """Boolean check if (A,G,dt) in valid region"""
+        dt = nn.sigmoid(dt)
+        return (G_diag >= 0) & (((G_diag + dt*A_diag)**2 - 4*A_diag) < 0)
+
     def _ring_init_AGdt(self, r_min, r_max, theta_min, theta_max, dt_std, key):
         # Solve symbolically
         a, g, dt, lam1, lam2 = sp.symbols('a g dt lam1 lam2')
@@ -553,6 +571,19 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
         # Convert to (A, G) representation
         a_vals, g_vals = f(lam1_vals, lam2_vals, dt_sigmoid)
 
+        # Invertibility, stability, and validity checks
+        h1 = sp.lambdify((a, g, dt), eigs[0], "numpy")
+        h2 = sp.lambdify((a, g, dt), eigs[1], "numpy")
+        lam1_out_vals = h1(a_vals, g_vals, dt_sigmoid)
+        lam2_out_vals = h2(a_vals, g_vals, dt_sigmoid)
+        invertible = jnp.all(jnp.isclose(lam1_out_vals, lam1_vals) | jnp.isclose(jnp.conjugate(lam1_out_vals), lam1_vals)) \
+                   & jnp.all(jnp.isclose(lam2_out_vals, lam2_vals) | jnp.isclose(jnp.conjugate(lam2_out_vals), lam2_vals))
+        stable = jnp.all(jnp.abs(lam1_out_vals) < 1.0) & jnp.all(jnp.abs(lam2_out_vals) < 1.0)
+        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_sigmoid))
+        print(f"Invertibility check: {invertible}")
+        print(f"Stability check: {stable}")
+        print(f"Validity check: {valid}")
+
         return a_vals, g_vals, dt_vals
 
     def _uniform_init_AGdt(self, A_min, A_max, G_min, G_max, dt_std, key):
@@ -563,18 +594,13 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
         G_vals = []
         dt_vals = []
 
-        def _is_valid_AGdt(A_diag, G_diag, dt):
-            """Boolean check if (A,G,dt) in valid region"""
-            dt = nn.sigmoid(dt)
-            return (G_diag >= 0) & (((G_diag + dt*A_diag)**2 - 4*A_diag) < 0)
-
         while not done:
             A_key, G_key, dt_key, key = jr.split(key, 4)
             A_diag = jr.uniform(A_key, shape=(bsz,)) * (A_max - A_min) + A_min
             G_diag = jr.uniform(G_key, shape=(bsz,)) * (G_max - G_min) + G_min
             dt = normal(stddev=dt_std)(dt_key, (bsz,))
 
-            mask = _is_valid_AGdt(A_diag, G_diag, dt)
+            mask = self._is_valid_AGdt(A_diag, G_diag, dt)
             A_vals.extend(list(A_diag[mask]))
             G_vals.extend(list(G_diag[mask]))
             dt_vals.extend(list(dt[mask]))
@@ -687,6 +713,11 @@ class DampedIMLayer(_AbstractLinOSSLayer):
         self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
 
+    def _is_valid_AGdt(self, A_diag, G_diag, dt):
+        """Boolean check if (A,G,dt) in valid region"""
+        dt = nn.sigmoid(dt)
+        return (G_diag + dt*A_diag >= 0) & ((G_diag**2 - 4*A_diag) < 0)
+
     def _ring_init_AGdt(self, r_min, r_max, theta_min, theta_max, dt_std, key):
         # Solve symbolically
         a, g, dt, lam1, lam2 = sp.symbols('a g dt lam1 lam2')
@@ -713,6 +744,19 @@ class DampedIMLayer(_AbstractLinOSSLayer):
         # Convert to (A, G) representation
         a_vals, g_vals = f(lam1_vals, lam2_vals, dt_sigmoid)
 
+        # Invertibility, stability, and validity checks
+        h1 = sp.lambdify((a, g, dt), eigs[0], "numpy")
+        h2 = sp.lambdify((a, g, dt), eigs[1], "numpy")
+        lam1_out_vals = h1(a_vals, g_vals, dt_sigmoid)
+        lam2_out_vals = h2(a_vals, g_vals, dt_sigmoid)
+        invertible = jnp.all(jnp.isclose(lam1_out_vals, lam1_vals) | jnp.isclose(jnp.conjugate(lam1_out_vals), lam1_vals)) \
+                   & jnp.all(jnp.isclose(lam2_out_vals, lam2_vals) | jnp.isclose(jnp.conjugate(lam2_out_vals), lam2_vals))
+        stable = jnp.all(jnp.abs(lam1_out_vals) < 1.0) & jnp.all(jnp.abs(lam2_out_vals) < 1.0)
+        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_sigmoid))
+        print(f"Invertibility check: {invertible}")
+        print(f"Stability check: {stable}")
+        print(f"Validity check: {valid}")
+
         return a_vals, g_vals, dt_vals
 
     def _uniform_init_AGdt(self, A_min, A_max, G_min, G_max, dt_std, key):
@@ -723,18 +767,13 @@ class DampedIMLayer(_AbstractLinOSSLayer):
         G_vals = []
         dt_vals = []
 
-        def _is_valid_AGdt(A_diag, G_diag, dt):
-            """Boolean check if (A,G,dt) in valid region"""
-            dt = nn.sigmoid(dt)
-            return (G_diag + dt*A_diag >= 0) & ((G_diag**2 - 4*A_diag) < 0)
-
         while not done:
             A_key, G_key, dt_key, key = jr.split(key, 4)
             A_diag = jr.uniform(A_key, shape=(bsz,)) * (A_max - A_min) + A_min
             G_diag = jr.uniform(G_key, shape=(bsz,)) * (G_max - G_min) + G_min
             dt = normal(stddev=dt_std)(dt_key, (bsz,))
 
-            mask = _is_valid_AGdt(A_diag, G_diag, dt)
+            mask = self._is_valid_AGdt(A_diag, G_diag, dt)
             A_vals.extend(list(A_diag[mask]))
             G_vals.extend(list(G_diag[mask]))
             dt_vals.extend(list(dt[mask]))
@@ -848,6 +887,11 @@ class DampedEXLayer(_AbstractLinOSSLayer):
         self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
 
+    def _is_valid_AGdt(self, A_diag, G_diag, dt):
+        """Boolean check if (A,G,dt) in valid region"""
+        dt = nn.sigmoid(dt)
+        return (G_diag - dt*A_diag >= 0) & ((G_diag**2 - 4*A_diag) < 0)
+
     def _ring_init_AGdt(self, r_min, r_max, theta_min, theta_max, dt_std, key):
         # Solve symbolically
         a, g, dt, lam1, lam2 = sp.symbols('a g dt lam1 lam2')
@@ -874,6 +918,19 @@ class DampedEXLayer(_AbstractLinOSSLayer):
         # Convert to (A, G) representation
         a_vals, g_vals = f(lam1_vals, lam2_vals, dt_sigmoid)
 
+        # Invertibility, stability, and validity checks
+        h1 = sp.lambdify((a, g, dt), eigs[0], "numpy")
+        h2 = sp.lambdify((a, g, dt), eigs[1], "numpy")
+        lam1_out_vals = h1(a_vals, g_vals, dt_sigmoid)
+        lam2_out_vals = h2(a_vals, g_vals, dt_sigmoid)
+        invertible = jnp.all(jnp.isclose(lam1_out_vals, lam1_vals) | jnp.isclose(jnp.conjugate(lam1_out_vals), lam1_vals)) \
+                   & jnp.all(jnp.isclose(lam2_out_vals, lam2_vals) | jnp.isclose(jnp.conjugate(lam2_out_vals), lam2_vals))
+        stable = jnp.all(jnp.abs(lam1_out_vals) < 1.0) & jnp.all(jnp.abs(lam2_out_vals) < 1.0)
+        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_sigmoid))
+        print(f"Invertibility check: {invertible}")
+        print(f"Stability check: {stable}")
+        print(f"Validity check: {valid}")
+
         return a_vals, g_vals, dt_vals
 
     def _uniform_init_AGdt(self, A_min, A_max, G_min, G_max, dt_std, key):
@@ -884,18 +941,13 @@ class DampedEXLayer(_AbstractLinOSSLayer):
         G_vals = []
         dt_vals = []
 
-        def _is_valid_AGdt(A_diag, G_diag, dt):
-            """Boolean check if (A,G,dt) in valid region"""
-            dt = nn.sigmoid(dt)
-            return (G_diag - dt*A_diag >= 0) & ((G_diag**2 - 4*A_diag) < 0)
-
         while not done:
             A_key, G_key, dt_key, key = jr.split(key, 4)
             A_diag = jr.uniform(A_key, shape=(bsz,)) * (A_max - A_min) + A_min
             G_diag = jr.uniform(G_key, shape=(bsz,)) * (G_max - G_min) + G_min
             dt = normal(stddev=dt_std)(dt_key, (bsz,))
 
-            mask = _is_valid_AGdt(A_diag, G_diag, dt)
+            mask = self._is_valid_AGdt(A_diag, G_diag, dt)
             A_vals.extend(list(A_diag[mask]))
             G_vals.extend(list(G_diag[mask]))
             dt_vals.extend(list(dt[mask]))
