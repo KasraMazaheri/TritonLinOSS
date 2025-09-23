@@ -12,7 +12,6 @@ import os
 import yaml
 import itertools
 import numpy as np
-from pathlib import Path
 
 
 def create_grid_experiment(experiment_folder, model_name, dataset_name):
@@ -62,7 +61,7 @@ def create_grid_experiment(experiment_folder, model_name, dataset_name):
 def create_random_experiment(experiment_folder, model_name, dataset_name):
     # Hyperparameter sweep
     num_runs = 150
-    learning_rate = [1e-2, 1e-5]
+    learning_rate = [5e-3, 5e-5]
     state_dim = [16, 256]
     hidden_dim = [16, 256]
     num_blocks = [2, 6]
@@ -70,7 +69,10 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
     batch_size = [4, 64]
     A_max = [1.0, 10.0]
     G_max = [1.0, 10.0]
-    drop_rate = [0.0, 0.15]
+    dt_std = [0.0, 1.0]
+    drop_rate = [0.0, 0.1]
+    weight_decay = [0.0, 0.05]
+    cosine_annealing = [False, True]
 
     for i in range(num_runs):
         se = int(np.random.randint(0, num_runs))
@@ -82,24 +84,29 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
         bs = int(np.random.uniform(*batch_size))
         am = float(np.random.uniform(*A_max))
         gm = float(np.random.uniform(*G_max))
+        ds = float(np.random.uniform(*dt_std))
         dr = float(np.random.uniform(*drop_rate))
+        wd = float(np.random.uniform(*weight_decay))
+        cs = bool(np.random.choice(cosine_annealing))
 
         hyperparameters = {
             "seed": se,
             "model_name": model_name,
             "dataset_name": dataset_name,
             "data_dir": "/lustre/home/jboyer/damped-linoss/data",
-            "lr": lr,
+            "classification": True,
+            "use_presplit": True,
+            "output_step": 1,
             "num_steps": 100000,
             "print_steps": 1000,
             "batch_size": bs,
-            "classification": True,
-            "use_presplit": True,
+            "lr": lr,
+            "weight_decay": wd,
+            "cosine_annealing": cs,
             "include_time": tm,
             "time_duration": 1.0,
             "tanh_output": False,
-            "output_step": 1,
-            "layer_name": "DampedIMEX1",
+            "layer_name": "DampedIMEX2",
             "num_blocks": nb,
             "state_dim": sd,
             "hidden_dim": hd,
@@ -107,7 +114,8 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
             "A_max": am,
             "G_min": 0.0,
             "G_max": gm,
-            "drop_rate": dr
+            "dt_std": ds,
+            "drop_rate": dr,
         }
 
         # Write config
@@ -120,7 +128,8 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
 if __name__ == "__main__":
     model_name = "LinOSS"
     dataset_name = "SequentialCifar10"
-    experiment_folder = f"experiments/D-LinOSS/{dataset_name}/"
+    experiment_folder = f"experiments/D-LinOSS-IMEX2/{dataset_name}/"
 
     # create_grid_experiment(experiment_folder, model_name, dataset_name)
     create_random_experiment(experiment_folder, model_name, dataset_name)
+                                                                           

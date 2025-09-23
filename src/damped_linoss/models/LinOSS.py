@@ -199,7 +199,7 @@ class DampedIMEX1Layer(_AbstractLinOSSLayer):
     B: jax.Array
     C: jax.Array
     D: jax.Array
-    steps: jax.Array
+    dt: jax.Array
     state_dim: int
 
     def __init__(
@@ -329,7 +329,7 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
     B: jax.Array
     C: jax.Array
     D: jax.Array
-    steps: jax.Array
+    dt: jax.Array
     state_dim: int
 
     def __init__(
@@ -346,17 +346,15 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
     ):
         self.state_dim = state_dim
         init_key, B_key, C_key, D_key, key = jr.split(key, 5)
-        print("Initializing parameters.")
         self.A_diag, self.G_diag, self.dt = self._init_AGdt(A_min, A_max, G_min, G_max, dt_std, init_key)
         self.B = simple_uniform_init(B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim))
         self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
-        print("Init finished.")
 
     def _is_valid_AGdt(self, A_diag, G_diag, dt):
         """Boolean check if (A,G,dt) in valid region"""
         dt = nn.sigmoid(dt)
-        return (0 <= dt*G_diag <= 1) & (((G_diag + dt*A_diag)**2 - 4*A_diag) < 0)
+        return (0 <= dt*G_diag) & (dt*G_diag <= 1) & (((G_diag + dt*A_diag)**2 - 4*A_diag) < 0)
 
     def _init_AGdt(self, A_min, A_max, G_min, G_max, dt_std, key):
         """Uniform sampling over valid (A,G,dt) region"""
@@ -396,9 +394,9 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
         G_low = 0
         G_high = 1 / jnp.maximum(dt, 1e-6)
         G_diag = self._clamp_relu(G_diag, G_low, G_high)
-        
-        A_low = -2 * jnp.sqrt(A_diag) - dt * A_diag
-        A_high = 2 * jnp.sqrt(A_diag) - dt * A_diag
+
+        A_low = (2 - dt * G_diag - 2 * jnp.sqrt(1 - dt * G_diag)) / jnp.maximum(dt**2, 1e-6)
+        A_high = (2 - dt * G_diag + 2 * jnp.sqrt(1 - dt * G_diag)) / jnp.maximum(dt**2, 1e-6)
         A_diag = self._clamp_relu(A_diag, A_low, A_high)
         
         return A_diag, G_diag, dt

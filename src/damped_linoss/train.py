@@ -31,7 +31,6 @@ from datetime import datetime
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import jax.tree_util as jtu
 import optax
 import equinox as eqx
 
@@ -57,6 +56,67 @@ def safe_load(data, key, dtype=None):
     if dtype is not None:
         val = dtype(val)
     return val
+
+
+def create_warmup_cosine_schedule(peak_lr, num_steps, warmup_ratio=0.1, final_lr=1e-7):
+    """
+    Creates warmup + cosine annealing schedule.
+    
+    Args:
+        peak_lr: Peak learning rate to reach after warmup
+        num_steps: Total number of training steps
+        warmup_ratio: Fraction of training for warmup (default 0.1 = 10%)
+        final_lr: Final learning rate after cosine decay (default 1e-7)
+    Returns:
+        Optax schedule function
+    """
+    warmup_steps = int(num_steps * warmup_ratio)
+    cosine_steps = num_steps - warmup_steps
+    
+    # Create individual schedules
+    warmup_schedule = optax.linear_schedule(
+        init_value=1e-7,
+        end_value=peak_lr,
+        transition_steps=warmup_steps
+    )
+        
+    cosine_schedule = optax.cosine_decay_schedule(
+        init_value=peak_lr,
+        decay_steps=cosine_steps,
+        alpha=final_lr / peak_lr
+    )
+    
+    # Join the schedules
+    schedule = optax.join_schedules(
+        schedules=[warmup_schedule, cosine_schedule],
+        boundaries=[warmup_steps]
+    )
+    
+    return schedule
+
+
+def create_optimizer(lr, weight_decay, num_steps, use_warmup_cosine):
+    """
+    Create optimizer.
+    
+    Args:
+        lr: Base learning rate
+        weight_decay: Weight decay coefficient
+        num_steps: Total training steps
+        use_warmup_cosine: Whether to use warmup + cosine schedule
+    
+    Returns:
+        Configured optimizer
+    """
+    if use_warmup_cosine:
+        schedule = create_warmup_cosine_schedule(lr, num_steps)
+        opt = optax.adamw(learning_rate=schedule, weight_decay=weight_decay)
+    else:
+        if weight_decay > 0:
+            opt = optax.adamw(learning_rate=lr, weight_decay=weight_decay)
+        else:   
+            opt = optax.adam(learning_rate=lr)
+    return opt
 
 
 @eqx.filter_jit
@@ -101,7 +161,8 @@ def regression_loss(model, X, y, state, key):
 @eqx.filter_jit
 def make_step(model, X, y, loss_fn, state, opt, opt_state, key):
     (value, state), grads = loss_fn(model, X, y, state, key)
-    updates, opt_state = opt.update(grads, opt_state)
+    params = eqx.filter(model, eqx.is_inexact_array)
+    updates, opt_state = opt.update(grads, opt_state, params)
     model = eqx.apply_updates(model, updates)
     return model, state, opt_state, value
 
@@ -141,13 +202,15 @@ def train_model(
     classification: bool,
     num_steps: int,
     print_steps: int,
-    lr: float,
     batch_size: int,
+    lr: float,
+    weight_decay: float,
+    cosine_annealing: bool,
     key: jax.Array,
 ):
     # Initialize model optimizer
     batchkey, key = jr.split(key, 2)
-    opt = optax.adam(learning_rate=lr)
+    opt = create_optimizer(lr, weight_decay=weight_decay, num_steps=num_steps, use_warmup_cosine=cosine_annealing)
     opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
     
     # Model saving
@@ -296,8 +359,10 @@ def create_dataset_model_and_train(
         classification=safe_load(hyperparameters, "classification", bool),
         num_steps=safe_load(hyperparameters, "num_steps", int),
         print_steps=safe_load(hyperparameters, "print_steps", int),
-        lr=safe_load(hyperparameters, "lr", float),
         batch_size=safe_load(hyperparameters, "batch_size", int),
+        lr=safe_load(hyperparameters, "lr", float),
+        weight_decay=safe_load(hyperparameters, "weight_decay", float),
+        cosine_annealing=safe_load(hyperparameters, "cosine_annealing", bool),
         key=train_key,
     )
 
