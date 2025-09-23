@@ -354,7 +354,7 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
     def _is_valid_AGdt(self, A_diag, G_diag, dt):
         """Boolean check if (A,G,dt) in valid region"""
         dt = nn.sigmoid(dt)
-        return (0 <= dt*G_diag) & (dt*G_diag <= 1) & (((G_diag + dt*A_diag)**2 - 4*A_diag) < 0)
+        return (G_diag >= 0) & (((G_diag + dt*A_diag)**2 - 4*A_diag) < 0)
 
     def _init_AGdt(self, A_min, A_max, G_min, G_max, dt_std, key):
         """Uniform sampling over valid (A,G,dt) region"""

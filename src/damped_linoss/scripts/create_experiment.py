@@ -69,8 +69,8 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
     batch_size = [4, 64]
     A_max = [1.0, 10.0]
     G_max = [1.0, 10.0]
-    dt_std = [0.0, 1.0]
-    drop_rate = [0.0, 0.1]
+    # dt_std = [0.0, 1.0]
+    # drop_rate = [0.0, 0.1]
     weight_decay = [0.0, 0.05]
     cosine_annealing = [False, True]
 
@@ -84,8 +84,8 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
         bs = int(np.random.uniform(*batch_size))
         am = float(np.random.uniform(*A_max))
         gm = float(np.random.uniform(*G_max))
-        ds = float(np.random.uniform(*dt_std))
-        dr = float(np.random.uniform(*drop_rate))
+        # ds = float(np.random.uniform(*dt_std))
+        # dr = float(np.random.uniform(*drop_rate))
         wd = float(np.random.uniform(*weight_decay))
         cs = bool(np.random.choice(cosine_annealing))
 
@@ -114,8 +114,8 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
             "A_max": am,
             "G_min": 0.0,
             "G_max": gm,
-            "dt_std": ds,
-            "drop_rate": dr,
+            "dt_std": 0.5,
+            "drop_rate": 0.1,
         }
 
         # Write config
