@@ -30,7 +30,7 @@ def make_group_key(hparams, keys):
 
 def main(exp_root):
     groups = defaultdict(list)
-    group_keys_to_use = ["model_name", "dataset_name", "seed", "lr", "state_dim", "hidden_dim", "num_blocks", "include_time"]
+    group_keys_to_use = ["model_name", "dataset_name", "seed", "lr", "state_dim", "hidden_dim", "num_blocks", "include_time", "weight_decay", "cosine_annealing", "batch_size", "r_min", "r_max", "theta_min", "theta_max", "A_min", "A_max", "G_min", "G_max", "dt_std", "drop_rate"]
 
     # Find all results.txt in run_XXX folders under exp_root
     pattern = os.path.join(exp_root, "run_*/test_metric.txt")

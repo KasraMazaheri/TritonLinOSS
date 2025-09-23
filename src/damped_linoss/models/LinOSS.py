@@ -6,7 +6,7 @@ from jax import nn
 from jax.nn.initializers import normal
 import equinox as eqx
 import sympy as sp
-from jax.typing import PRNGKeyArray
+from jaxtyping import PRNGKeyArray
 
 from damped_linoss.models.common import GLU, simple_uniform_init
 
@@ -405,10 +405,14 @@ class DampedIMEX1Layer(_AbstractLinOSSLayer):
         invertible = jnp.all(jnp.isclose(lam1_out_vals, lam1_vals) | jnp.isclose(jnp.conjugate(lam1_out_vals), lam1_vals)) \
                    & jnp.all(jnp.isclose(lam2_out_vals, lam2_vals) | jnp.isclose(jnp.conjugate(lam2_out_vals), lam2_vals))
         stable = jnp.all(jnp.abs(lam1_out_vals) < 1.0) & jnp.all(jnp.abs(lam2_out_vals) < 1.0)
-        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_sigmoid))
+        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_vals))
         print(f"Invertibility check: {invertible}")
         print(f"Stability check: {stable}")
         print(f"Validity check: {valid}")
+
+        # Cast to real (imag part is nonzero, ~machine precision)
+        a_vals = a_vals.real
+        g_vals = g_vals.real
 
         return a_vals, g_vals, dt_vals
 
@@ -579,10 +583,14 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
         invertible = jnp.all(jnp.isclose(lam1_out_vals, lam1_vals) | jnp.isclose(jnp.conjugate(lam1_out_vals), lam1_vals)) \
                    & jnp.all(jnp.isclose(lam2_out_vals, lam2_vals) | jnp.isclose(jnp.conjugate(lam2_out_vals), lam2_vals))
         stable = jnp.all(jnp.abs(lam1_out_vals) < 1.0) & jnp.all(jnp.abs(lam2_out_vals) < 1.0)
-        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_sigmoid))
+        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_vals))
         print(f"Invertibility check: {invertible}")
         print(f"Stability check: {stable}")
         print(f"Validity check: {valid}")
+
+        # Cast to real (imag part is nonzero, ~machine precision)
+        a_vals = a_vals.real
+        g_vals = g_vals.real
 
         return a_vals, g_vals, dt_vals
 
@@ -752,10 +760,14 @@ class DampedIMLayer(_AbstractLinOSSLayer):
         invertible = jnp.all(jnp.isclose(lam1_out_vals, lam1_vals) | jnp.isclose(jnp.conjugate(lam1_out_vals), lam1_vals)) \
                    & jnp.all(jnp.isclose(lam2_out_vals, lam2_vals) | jnp.isclose(jnp.conjugate(lam2_out_vals), lam2_vals))
         stable = jnp.all(jnp.abs(lam1_out_vals) < 1.0) & jnp.all(jnp.abs(lam2_out_vals) < 1.0)
-        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_sigmoid))
+        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_vals))
         print(f"Invertibility check: {invertible}")
         print(f"Stability check: {stable}")
         print(f"Validity check: {valid}")
+
+        # Cast to real (imag part is nonzero, ~machine precision)
+        a_vals = a_vals.real
+        g_vals = g_vals.real
 
         return a_vals, g_vals, dt_vals
 
@@ -926,10 +938,14 @@ class DampedEXLayer(_AbstractLinOSSLayer):
         invertible = jnp.all(jnp.isclose(lam1_out_vals, lam1_vals) | jnp.isclose(jnp.conjugate(lam1_out_vals), lam1_vals)) \
                    & jnp.all(jnp.isclose(lam2_out_vals, lam2_vals) | jnp.isclose(jnp.conjugate(lam2_out_vals), lam2_vals))
         stable = jnp.all(jnp.abs(lam1_out_vals) < 1.0) & jnp.all(jnp.abs(lam2_out_vals) < 1.0)
-        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_sigmoid))
+        valid = jnp.all(self._is_valid_AGdt(a_vals, g_vals, dt_vals))
         print(f"Invertibility check: {invertible}")
         print(f"Stability check: {stable}")
         print(f"Validity check: {valid}")
+
+        # Cast to real (imag part is nonzero, ~machine precision)
+        a_vals = a_vals.real
+        g_vals = g_vals.real
 
         return a_vals, g_vals, dt_vals
 

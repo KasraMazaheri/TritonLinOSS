@@ -60,7 +60,7 @@ import numpy as np
 
 def create_random_experiment(experiment_folder, model_name, dataset_name):
     # Hyperparameter sweep
-    num_runs = 150
+    num_runs = 100
     learning_rate = [5e-3, 5e-5]
     state_dim = [16, 256]
     hidden_dim = [16, 256]
@@ -81,6 +81,7 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
         _learning_rate = float(np.exp(np.random.uniform(np.log(learning_rate[0]), np.log(learning_rate[1]))))
         _include_time = bool(np.random.choice(include_time))
         _num_blocks = int(np.random.uniform(*num_blocks))
+        # _num_blocks = np.random.randint(num_blocks[0], num_blocks[1] + 1)
         _state_dim = int(np.exp(np.random.uniform(np.log(state_dim[0]), np.log(state_dim[1]))))
         _hidden_dim = int(np.exp(np.random.uniform(np.log(hidden_dim[0]), np.log(hidden_dim[1]))))
         _batch_size = int(np.random.uniform(*batch_size))
@@ -138,6 +139,9 @@ if __name__ == "__main__":
     model_name = "LinOSS"
     dataset_name = "SequentialCifar10"
     experiment_folder = f"experiments/D-LinOSS-IMEX1/{dataset_name}/"
+
+    if os.path.exists(experiment_folder):
+        raise RuntimeError("Experiment already exists!")
 
     # create_grid_experiment(experiment_folder, model_name, dataset_name)
     create_random_experiment(experiment_folder, model_name, dataset_name)
