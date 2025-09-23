@@ -447,6 +447,261 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
         return xs
     
 
+class DampedIMLayer(_AbstractLinOSSLayer):
+    """
+    Based on the characteristic recurrence
+    z_k+1 = z_k + dt * (-Ax_k+1 - Gz_k+1 + Bu_k+1)
+    x_k+1 = x_k + dt * (z_k+1)
+    """
+    A_diag: jax.Array
+    G_diag: jax.Array
+    B: jax.Array
+    C: jax.Array
+    D: jax.Array
+    dt: jax.Array
+    state_dim: int
+
+    def __init__(
+        self, 
+        state_dim, 
+        hidden_dim, 
+        A_min, 
+        A_max, 
+        G_min, 
+        G_max, 
+        dt_std, 
+        *, 
+        key
+    ):
+        self.state_dim = state_dim
+        init_key, B_key, C_key, D_key, key = jr.split(key, 5)
+        self.A_diag, self.G_diag, self.dt = self._init_AGdt(A_min, A_max, G_min, G_max, dt_std, init_key)
+        self.B = simple_uniform_init(B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim))
+        self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
+        self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
+
+    def _is_valid_AGdt(self, A_diag, G_diag, dt):
+        """Boolean check if (A,G,dt) in valid region"""
+        dt = nn.sigmoid(dt)
+        return (G_diag + dt*A_diag >= 0) & ((G_diag**2 - 4*A_diag) < 0)
+
+    def _init_AGdt(self, A_min, A_max, G_min, G_max, dt_std, key):
+        """Uniform sampling over valid (A,G,dt) region"""
+        bsz = 512
+        done = False 
+        A_vals = []
+        G_vals = []
+        dt_vals = []
+
+        while not done:
+            A_key, G_key, dt_key, key = jr.split(key, 4)
+            A_diag = jr.uniform(A_key, shape=(bsz,)) * (A_max - A_min) + A_min
+            G_diag = jr.uniform(G_key, shape=(bsz,)) * (G_max - G_min) + G_min
+            dt = normal(stddev=dt_std)(dt_key, (bsz,))
+
+            mask = self._is_valid_AGdt(A_diag, G_diag, dt)
+            A_vals.extend(list(A_diag[mask]))
+            G_vals.extend(list(G_diag[mask]))
+            dt_vals.extend(list(dt[mask]))
+
+            if len(A_vals) >= self.state_dim and len(G_vals) >= self.state_dim and len(dt_vals) >= self.state_dim:
+                done = True
+
+        A_diag = jnp.array(A_vals[:self.state_dim])
+        G_diag = jnp.array(G_vals[:self.state_dim])
+        dt = jnp.array(dt_vals[:self.state_dim])
+
+        return A_diag, G_diag, dt
+    
+    def _clamp_relu(self, x, x_low, x_high):
+        return x_low + nn.relu(x - x_low) - nn.relu(x - x_high)
+    
+    def _soft_project_AGdt(self, A_diag, G_diag, dt):
+        """soft projection to the _is_valid_AGdt region"""
+        dt = nn.sigmoid(dt)
+
+        G_low = -dt * A_diag
+        G_diag = G_low + nn.relu(G_diag - G_low)
+
+        A_low = 1/4*G_diag**2
+        A_diag = A_low + nn.relu(A_diag - A_low)
+
+        return A_diag, G_diag, dt
+
+    def _recurrence(self, A_diag, G_diag, dt, Bu_elements):
+        """Compute the LxP output of Damped-LinOSS given an LxH input.
+        Args:
+            A_diag          (float32):    diagonal state matrix     (P,)
+            G_diag          (float32):    diagonal damping matrix   (P,)
+            dt              (float32):    discretization time-step  (P,)
+            Bu_elements     (complex64):  B @ u                     (L, P)
+        Returns:
+            ys              (float32):    SSM states                (L, P)
+        """
+        sql = Bu_elements.shape[0]
+
+        I = jnp.ones_like(A_diag)
+        S = I + dt * G_diag + dt**2 * A_diag
+        M_11 = 1 / S
+        M_12 = -dt * A_diag / S
+        M_21 = dt / S
+        M_22 = (I + dt * G_diag) / S
+
+        M = jnp.concatenate([M_11, M_12, M_21, M_22])
+        M_elements = M * jnp.ones((sql, 4 * self.state_dim))
+
+        F1 = dt * (1.0 / S) * Bu_elements
+        F2 = dt**2 * (1.0 / S) * Bu_elements
+        F = jnp.hstack((F1, F2))
+
+        _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
+        ys = xs[:, self.state_dim:]  # Position component
+
+        return ys
+
+    def __call__(self, input_sequence):
+        # Materialize parameters
+        B_complex = self.B[..., 0] + 1j * self.B[..., 1]
+        C_complex = self.C[..., 0] + 1j * self.C[..., 1]
+
+        # Project
+        A_diag, G_diag, dt = self._soft_project_AGdt(self.A_diag, self.G_diag, self.dt)
+
+        # Apply SSM
+        Bu_elements = jax.vmap(lambda u: B_complex @ u)(input_sequence)
+        ys = self._recurrence(A_diag, G_diag, dt, Bu_elements)
+        xs = jax.vmap(lambda x, u: (C_complex @ x).real + self.D * u)(ys, input_sequence)
+
+        return xs
+    
+
+class DampedEXLayer(_AbstractLinOSSLayer):
+    """
+    Based on the characteristic recurrence
+    z_k+1 = z_k + dt * (-Ax_k - Gz_k + Bu_k+1)
+    x_k+1 = x_k + dt * (z_k)
+    """
+    A_diag: jax.Array
+    G_diag: jax.Array
+    B: jax.Array
+    C: jax.Array
+    D: jax.Array
+    dt: jax.Array
+    state_dim: int
+
+    def __init__(
+        self, 
+        state_dim, 
+        hidden_dim, 
+        A_min, 
+        A_max, 
+        G_min, 
+        G_max, 
+        dt_std, 
+        *, 
+        key
+    ):
+        self.state_dim = state_dim
+        init_key, B_key, C_key, D_key, key = jr.split(key, 5)
+        self.A_diag, self.G_diag, self.dt = self._init_AGdt(A_min, A_max, G_min, G_max, dt_std, init_key)
+        self.B = simple_uniform_init(B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim))
+        self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
+        self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
+
+    def _is_valid_AGdt(self, A_diag, G_diag, dt):
+        """Boolean check if (A,G,dt) in valid region"""
+        dt = nn.sigmoid(dt)
+        return (G_diag - dt*A_diag >= 0) & ((G_diag**2 - 4*A_diag) < 0)
+
+    def _init_AGdt(self, A_min, A_max, G_min, G_max, dt_std, key):
+        """Uniform sampling over valid (A,G,dt) region"""
+        bsz = 512
+        done = False 
+        A_vals = []
+        G_vals = []
+        dt_vals = []
+
+        while not done:
+            A_key, G_key, dt_key, key = jr.split(key, 4)
+            A_diag = jr.uniform(A_key, shape=(bsz,)) * (A_max - A_min) + A_min
+            G_diag = jr.uniform(G_key, shape=(bsz,)) * (G_max - G_min) + G_min
+            dt = normal(stddev=dt_std)(dt_key, (bsz,))
+
+            mask = self._is_valid_AGdt(A_diag, G_diag, dt)
+            A_vals.extend(list(A_diag[mask]))
+            G_vals.extend(list(G_diag[mask]))
+            dt_vals.extend(list(dt[mask]))
+
+            if len(A_vals) >= self.state_dim and len(G_vals) >= self.state_dim and len(dt_vals) >= self.state_dim:
+                done = True
+
+        A_diag = jnp.array(A_vals[:self.state_dim])
+        G_diag = jnp.array(G_vals[:self.state_dim])
+        dt = jnp.array(dt_vals[:self.state_dim])
+
+        return A_diag, G_diag, dt
+    
+    def _clamp_relu(self, x, x_low, x_high):
+        return x_low + nn.relu(x - x_low) - nn.relu(x - x_high)
+    
+    def _soft_project_AGdt(self, A_diag, G_diag, dt):
+        """soft projection to the _is_valid_AGdt region"""
+        dt = nn.sigmoid(dt)
+
+        G_low = dt * A_diag
+        G_diag = G_low + nn.relu(G_diag - G_low)
+
+        A_low = 1/4*G_diag**2
+        A_diag = A_low + nn.relu(A_diag - A_low)
+
+        return A_diag, G_diag, dt
+
+    def _recurrence(self, A_diag, G_diag, dt, Bu_elements):
+        """Compute the LxP output of Damped-LinOSS given an LxH input.
+        Args:
+            A_diag          (float32):    diagonal state matrix     (P,)
+            G_diag          (float32):    diagonal damping matrix   (P,)
+            dt              (float32):    discretization time-step  (P,)
+            Bu_elements     (complex64):  B @ u                     (L, P)
+        Returns:
+            ys              (float32):    SSM states                (L, P)
+        """
+        sql = Bu_elements.shape[0]
+
+        I = jnp.ones_like(A_diag)
+        M_11 = I - dt * G_diag
+        M_12 = -dt * A_diag
+        M_21 = dt
+        M_22 = I
+
+        M = jnp.concatenate([M_11, M_12, M_21, M_22])
+        M_elements = M * jnp.ones((sql, 4 * self.state_dim))
+
+        F1 = dt * Bu_elements
+        F2 = jnp.zeros_like(F1)
+        F = jnp.hstack((F1, F2))
+
+        _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
+        ys = xs[:, self.state_dim:]  # Position component
+
+        return ys
+
+    def __call__(self, input_sequence):
+        # Materialize parameters
+        B_complex = self.B[..., 0] + 1j * self.B[..., 1]
+        C_complex = self.C[..., 0] + 1j * self.C[..., 1]
+
+        # Project
+        A_diag, G_diag, dt = self._soft_project_AGdt(self.A_diag, self.G_diag, self.dt)
+
+        # Apply SSM
+        Bu_elements = jax.vmap(lambda u: B_complex @ u)(input_sequence)
+        ys = self._recurrence(A_diag, G_diag, dt, Bu_elements)
+        xs = jax.vmap(lambda x, u: (C_complex @ x).real + self.D * u)(ys, input_sequence)
+
+        return xs
+    
+
 class LinOSSBlock(eqx.Module):
     norm: eqx.nn.BatchNorm
     layer: _AbstractLinOSSLayer
@@ -473,6 +728,8 @@ class LinOSSBlock(eqx.Module):
             "IMEX": IMEXLayer,
             "DampedIMEX1": DampedIMEX1Layer,
             "DampedIMEX2": DampedIMEX2Layer,
+            "DampedIM": DampedIMLayer,
+            "DampedEX": DampedEXLayer,
         }
         if layer_name not in layer_map.keys():
             raise KeyError(f"Layer name {layer_name} not defined.")
