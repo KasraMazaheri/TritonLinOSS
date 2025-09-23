@@ -1,6 +1,8 @@
 import os
 import yaml
 import glob
+import numpy as np
+import math
 import statistics
 from collections import defaultdict
 from sys import argv
@@ -37,12 +39,14 @@ def main(exp_root):
     for result_path in glob.glob(pattern, recursive=True):
         dir_path = os.path.dirname(result_path)
         hyper_path = os.path.join(dir_path, "hyperparameters.yaml")
+        meta_path = os.path.join(dir_path, "metadata.txt")
+        metric_path = os.path.join(dir_path, "log_metrics.npy")
 
         # Load result.txt
         try:
             with open(result_path, "r") as f:
                 lines = f.readlines()
-                result_value = float(lines[0])
+                test_metric = float(lines[0])
         except Exception as e:
             print(f"Failed to read {result_path}: {e}")
             continue
@@ -55,23 +59,69 @@ def main(exp_root):
             print(f"Failed to read {hyper_path}: {e}")
             continue
 
+        # Load metadata.txt
+        try:
+            with open(meta_path, "r") as f:
+                lines = f.readlines()
+                model_size = int(lines[1].split(" ")[-2].replace(",", ""))
+        except Exception as e:
+            print(f"Failed to read {meta_path}: {e}")
+            continue
+
+        # Load log_metrics.npy
+        try:
+            log_metrics = np.load(metric_path)
+            average_time = np.mean(log_metrics[:, 1])
+            val_metric = np.max(log_metrics[:, 3])
+        except Exception as e:
+            print(f"Failed to read {metric_path}: {e}")
+            continue
+
         group_key = make_group_key(hyperparameters, group_keys_to_use)
 
-        groups[group_key].append(result_value)
+        groups[group_key].append((test_metric, val_metric, model_size, average_time))
 
     summaries = []
 
-    for group_key, scores in groups.items():
-        mean_score = statistics.mean(scores)
-        std_score = statistics.stdev(scores) if len(scores) > 1 else 0.0
-        num = len(scores)
-        summaries.append((mean_score, std_score, group_key, num))
+    for group_key, results in groups.items():
+        test_scores = [score for score, _, _, _ in results]
+        val_scores = [score for _, score, _, _ in results]
+        sizes = [size for _, _, size, _ in results]
+        times = [time for _, _, _, time in results]
 
-    summaries.sort(key=lambda x: x[0])
+        def compute_mean_std(scores):
+            if any(math.isnan(s) for s in scores):
+                mean_score = float('nan')
+                std_score = float('nan')
+            else:
+                mean_score = statistics.mean(scores)
+                std_score = statistics.stdev(scores) if len(scores) > 1 else 0.0
+            return mean_score, std_score
 
-    for mean_score, std_score, group_key, num in summaries:
-        print(f"[{mean_score:.6f} ± {std_score:.6f}] {group_key}")
-        print(f"# {num}")
+        mean_test, std_test = compute_mean_std(test_scores)
+        mean_val, std_val = compute_mean_std(val_scores)
+        size = sizes[0]  # Model sizes should be the same for constant hyperparams
+        time = statistics.mean(times)
+        num = len(results)
+
+        summaries.append({
+            "group": group_key,
+            "test_mean": mean_test,
+            "test_std": std_test,
+            "val_mean": mean_val,
+            "val_std": std_val,
+            "model_size": size,
+            "avg_time": time,
+            "num_runs": num,
+        })
+
+    summaries.sort(key=lambda x: x["val_mean"])
+
+    for result in summaries:
+        print(f"Test: [{result['test_mean']:.6f} ± {result['test_std']:.6f}]")
+        print(f"Val: [{result['val_mean']:.6f} ± {result['val_std']:.6f}]")
+        print(f"{result['group']}")
+        print(f"# {result['num_runs']}")
         print()
 
 if __name__ == "__main__":
