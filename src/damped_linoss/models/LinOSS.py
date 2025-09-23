@@ -391,9 +391,7 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
         """soft projection to the _is_valid_AGdt region"""
         dt = nn.sigmoid(dt)
 
-        G_low = 0
-        G_high = 1 / jnp.maximum(dt, 1e-6)
-        G_diag = self._clamp_relu(G_diag, G_low, G_high)
+        G_diag = nn.relu(G_diag)
 
         A_low = (2 - dt * G_diag - 2 * jnp.sqrt(1 - dt * G_diag)) / jnp.maximum(dt**2, 1e-6)
         A_high = (2 - dt * G_diag + 2 * jnp.sqrt(1 - dt * G_diag)) / jnp.maximum(dt**2, 1e-6)
@@ -417,7 +415,7 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
         M_11 = I - dt * G_diag
         M_12 = -dt * A_diag
         M_21 = dt * (I - dt * G_diag)
-        M_22 = -dt**2 * A_diag
+        M_22 = I - dt**2 * A_diag
 
         M = jnp.concatenate([M_11, M_12, M_21, M_22])
         M_elements = M * jnp.ones((sql, 4 * self.state_dim))
