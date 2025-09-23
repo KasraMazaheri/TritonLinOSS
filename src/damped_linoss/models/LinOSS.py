@@ -57,273 +57,140 @@ class _AbstractLinOSSLayer(eqx.Module):
         raise NotImplementedError
     
 
-# class IMLayer(_AbstractLinOSSLayer):
-#     A_diag: jax.Array
-#     B: jax.Array
-#     C: jax.Array
-#     D: jax.Array
-#     steps: jax.Array
+class IMLayer(_AbstractLinOSSLayer):
+    A_diag: jax.Array
+    B: jax.Array
+    C: jax.Array
+    D: jax.Array
+    dt: jax.Array
 
-#     def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max, *, key):
-#         A_key, B_key, C_key, D_key, step_key, key = jr.split(key, 6)
+    def __init__(
+        self, 
+        state_dim: int, 
+        hidden_dim: int, 
+        *args, 
+        key: PRNGKeyArray,
+    ):
+        self.state_dim = state_dim
+        A_key, B_key, C_key, D_key, dt_key, key = jr.split(key, 6)
+        self.dt = normal(stddev=0.5)(dt_key, (state_dim,))
+        self.A_diag = jr.uniform(A_key, shape=(state_dim,))
+        self.B = simple_uniform_init(B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim))
+        self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
+        self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
 
-#         self.steps = normal(stddev=0.5)(step_key, (state_dim,))
-#         self.A_diag = jr.uniform(A_key, shape=(state_dim,))
-#         self.B = simple_uniform_init(
-#             B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim)
-#         )
-#         self.C = simple_uniform_init(
-#             C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim)
-#         )
-#         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
+    def _recurrence(self, A_diag, dt, Bu_elements):
+        """Compute the LxP output of LinOSS-IM given an LxH input.
+        Args:
+            A_diag          (float32):    diagonal state matrix     (P,)
+            dt              (float32):    discretization time-step  (P,)
+            Bu_elements     (complex64):  B @ u                     (L, P)
+        Returns:
+            ys              (float32):    SSM states                (L, P)
+        """
+        sql = Bu_elements.shape[0]
 
-#     def _recurrence(self, A_diag, B_complex, input_sequence, step):
-#         """Compute the LxP output of LinOSS-IM given an LxH input.
-#         Args:
-#             A_diag          (float32):    diagonal state matrix     (P,)
-#             B_complex       (complex64):  input matrix              (P, H)
-#             input_sequence  (float32):    input sequence            (L, H)
-#             step            (float):      discretization time-step  (P,)
-#         Returns:
-#             ys              (float32):    SSM states                (L, P)
-#         """
-#         Bu_elements = jax.vmap(lambda u: B_complex @ u)(input_sequence)
+        S = 1.0 + dt**2.0 * A_diag
+        M_11 = 1.0 - dt**2.0 * A_diag / S
+        M_12 = -1.0 * dt * A_diag / S
+        M_21 = dt / S
+        M_22 = 1 / S
 
-#         schur_comp = 1.0 / (1.0 + step**2.0 * A_diag)
-#         M_11 = 1.0 - step**2.0 * A_diag * schur_comp
-#         M_12 = -1.0 * step * A_diag * schur_comp
-#         M_21 = step * schur_comp
-#         M_22 = schur_comp
+        M = jnp.concatenate([M_11, M_12, M_21, M_22])
+        M_elements = M * jnp.ones((sql, 4 * A_diag.shape[0]))
 
-#         M = jnp.concatenate([M_11, M_12, M_21, M_22])
+        F1 = M_11 * Bu_elements * dt
+        F2 = M_21 * Bu_elements * dt
+        F = jnp.hstack((F1, F2))
 
-#         M_elements = M * jnp.ones((input_sequence.shape[0], 4 * A_diag.shape[0]))
+        _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
+        ys = xs[:, A_diag.shape[0] :]
 
-#         F1 = M_11 * Bu_elements * step
-#         F2 = M_21 * Bu_elements * step
-#         F = jnp.hstack((F1, F2))
-
-#         _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
-#         ys = xs[:, A_diag.shape[0] :]
-
-#         return ys
-
-#     def __call__(self, input_sequence):
-#         steps = nn.sigmoid(self.steps)
-#         B_complex = self.B[..., 0] + 1j * self.B[..., 1]
-#         C_complex = self.C[..., 0] + 1j * self.C[..., 1]
-#         A_diag = nn.relu(self.A_diag)
-            
-#         ys = self._recurrence(A_diag, B_complex, input_sequence, steps)
-
-#         # Apply SSM Output Operations Cx + Du
-#         Cy = jax.vmap(lambda x: (C_complex @ x).real)(ys)
-#         Du = jax.vmap(lambda u: self.D * u)(input_sequence)
-#         xs = Cy + Du
-
-#         return xs
-
-
-# class IMEXLayer(_AbstractLinOSSLayer):
-#     A_diag: jax.Array
-#     B: jax.Array
-#     C: jax.Array
-#     D: jax.Array
-#     steps: jax.Array
-
-#     def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max, *, key):
-#         A_key, B_key, C_key, D_key, step_key, key = jr.split(key, 6)
-
-#         self.steps = normal(stddev=0.5)(step_key, (state_dim,))
-#         self.A_diag = jr.uniform(A_key, shape=(state_dim,))
-#         self.B = simple_uniform_init(
-#             B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim)
-#         )
-#         self.C = simple_uniform_init(
-#             C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim)
-#         )
-#         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
-
-#     def _recurrence(self, A_diag, B_complex, input_sequence, step):
-#         """Compute the LxP output of LinOSS-IMEX given an LxH input.
-#         Args:
-#             A_diag          (float32):    diagonal state matrix     (P,)
-#             B_complex       (complex64):  input matrix              (P, H)
-#             input_sequence  (float32):    input sequence            (L, H)
-#             step            (float):      discretization time-step  (P,)
-#         Returns:
-#             ys              (float32):    SSM states                (L, P)
-#         """
-#         Bu_elements = jax.vmap(lambda u: B_complex @ u)(input_sequence)
-
-#         A_ = jnp.ones_like(A_diag)
-#         B_ = -1.0 * step * A_diag
-#         C_ = step
-#         D_ = 1.0 - (step**2.0) * A_diag
-
-#         M = jnp.concatenate([A_, B_, C_, D_])
-
-#         M_elements = M * jnp.ones((input_sequence.shape[0], 4 * A_diag.shape[0]))
-
-#         F1 = Bu_elements * step
-#         F2 = Bu_elements * (step**2.0)
-#         F = jnp.hstack((F1, F2))
-
-#         _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
-#         ys = xs[:, A_diag.shape[0] :]
-
-#         return ys
-
-#     def __call__(self, input_sequence):
-#         steps = nn.sigmoid(self.steps)
-#         B_complex = self.B[..., 0] + 1j * self.B[..., 1]
-#         C_complex = self.C[..., 0] + 1j * self.C[..., 1]
-#         A_diag = nn.relu(self.A_diag)
-            
-#         ys = self._recurrence(A_diag, B_complex, input_sequence, steps)
-
-#         # Apply SSM Output Operations Cx + Du
-#         Cy = jax.vmap(lambda x: (C_complex @ x).real)(ys)
-#         Du = jax.vmap(lambda u: self.D * u)(input_sequence)
-#         xs = Cy + Du
-
-#         return xs
+        return ys
     
+    def __call__(self, input_sequence):
+        # Materialize parameters
+        B_complex = self.B[..., 0] + 1j * self.B[..., 1]
+        C_complex = self.C[..., 0] + 1j * self.C[..., 1]
 
-# class DampedLayer(_AbstractLinOSSLayer):
-#     """
-#     Based on the characteristic recurrence
-#     z_k+1 = z_k + dt * (-Ax_k - Gz_k+1 + Bu_k+1)
-#     x_k+1 = x_k + dt * (z_k+1)
-#     (original d-linoss implementation)
-#     """
-#     A_diag: jax.Array
-#     G_diag: jax.Array
-#     B: jax.Array
-#     C: jax.Array
-#     D: jax.Array
-#     steps: jax.Array
+        # Project
+        dt = nn.sigmoid(self.dt)
+        A_diag = nn.relu(self.A_diag)
 
-#     def __init__(self, state_dim, hidden_dim, A_min, A_max, G_min, G_max, dt_std, *, key):
-#         A_key, G_key, B_key, C_key, D_key, step_key, key = jr.split(key, 7)
+        # Apply SSM
+        Bu_elements = jax.vmap(lambda u: B_complex @ u)(input_sequence)
+        ys = self._recurrence(A_diag, dt, Bu_elements)
+        xs = jax.vmap(lambda x, u: (C_complex @ x).real + self.D * u)(ys, input_sequence)
 
-#         self.steps = normal(stddev=dt_std)(step_key, (state_dim,))
-#         steps = nn.sigmoid(self.steps)
+        return xs
 
-#         ## TEMP OVERRIDE OF VARIABLES FOR HYPERPARAMETERS
-#         r_min = G_min
-#         r_max = G_max
-#         theta_min = A_min
-#         theta_max = A_max
 
-#         mags = jnp.sqrt(
-#             jr.uniform(G_key, shape=(state_dim,)) * (r_max**2 - r_min**2)
-#             + r_min**2
-#         )
-#         self.G_diag = (1 - mags**2) / (steps * mags**2)
-#         G_diag = nn.relu(self.G_diag)
-#         theta = jr.uniform(A_key, shape=(state_dim,)) * theta_max
-#         self.A_diag = self._map_theta_to_A(theta, G_diag, steps)
-#         self.B = simple_uniform_init(
-#             B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim)
-#         )
-#         self.C = simple_uniform_init(
-#             C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim)
-#         )
-#         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
+class IMEXLayer(_AbstractLinOSSLayer):
+    A_diag: jax.Array
+    B: jax.Array
+    C: jax.Array
+    D: jax.Array
+    dt: jax.Array
 
-#     def _map_theta_to_A(self, thetas, G_diag, steps):
-#         A_plus = (
-#             4
-#             * jnp.sqrt(
-#                 steps**4 * jnp.cos(thetas) ** (-2)
-#                 + steps**5 * G_diag * jnp.cos(thetas) ** (-2)
-#             )
-#             - steps**2
-#             * (
-#                 -4
-#                 - 2 * steps * G_diag
-#                 - 4 * jnp.tan(thetas) ** 2
-#                 - 2 * steps * G_diag * jnp.tan(thetas) ** 2
-#             )
-#         ) / (2 * steps**4 * (1 + jnp.tan(thetas) ** 2))
-#         A_minus = (
-#             -4
-#             * jnp.sqrt(
-#                 steps**4 * jnp.cos(thetas) ** (-2)
-#                 + steps**5 * G_diag * jnp.cos(thetas) ** (-2)
-#             )
-#             - steps**2
-#             * (
-#                 -4
-#                 - 2 * steps * G_diag
-#                 - 4 * jnp.tan(thetas) ** 2
-#                 - 2 * steps * G_diag * jnp.tan(thetas) ** 2
-#             )
-#         ) / (2 * steps**4 * (1 + jnp.tan(thetas) ** 2))
+    def __init__(
+        self, 
+        state_dim: int, 
+        hidden_dim: int, 
+        *args, 
+        key: PRNGKeyArray,
+    ):
+        self.state_dim = state_dim
+        A_key, B_key, C_key, D_key, dt_key, key = jr.split(key, 6)
+        self.dt = normal(stddev=0.5)(dt_key, (state_dim,))
+        self.A_diag = jr.uniform(A_key, shape=(state_dim,))
+        self.B = simple_uniform_init(B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim))
+        self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
+        self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
 
-#         A_diag = jnp.where(thetas > jnp.pi / 2, A_plus, A_minus)
+    def _recurrence(self, A_diag, dt, Bu_elements):
+        """Compute the LxP output of LinOSS-IMEX given an LxH input.
+        Args:
+            A_diag          (float32):    diagonal state matrix     (P,)
+            dt              (float32):    discretization time-step  (P,)
+            Bu_elements     (complex64):  B @ u                     (L, P)
+        Returns:
+            ys              (float32):    SSM states                (L, P)
+        """
+        sql = Bu_elements.shape[0]
 
-#         return A_diag
+        A_ = jnp.ones_like(A_diag)
+        B_ = -1.0 * dt * A_diag
+        C_ = dt
+        D_ = 1.0 - (dt**2.0) * A_diag
 
-#     def _recurrence(self, A_diag, G_diag, B_complex, input_sequence, step):
-#         """Compute the LxP output of Damped-LinOSS given an LxH input.
-#         Args:
-#             A_diag          (float32):    diagonal state matrix     (P,)
-#             G_diag          (float32):    diagonal damping matrix   (P,)
-#             B_complex       (complex64):  input matrix              (P, H)
-#             input_sequence  (float32):    input sequence            (L, H)
-#             step            (float):      discretization time-step  (P,)
-#         Returns:
-#             ys              (float32):    SSM states                (L, P)
-#         """
-#         Bu_elements = jax.vmap(lambda u: B_complex @ u)(input_sequence)
+        M = jnp.concatenate([A_, B_, C_, D_])
+        M_elements = M * jnp.ones((sql, 4 * A_diag.shape[0]))
 
-#         Identity = jnp.ones_like(A_diag)
-#         S = Identity + step * G_diag
-#         M_11 = 1.0 / S
-#         M_12 = -step / S * A_diag
-#         M_21 = step / S
-#         M_22 = Identity - step**2 / S * A_diag
+        F1 = Bu_elements * dt
+        F2 = Bu_elements * (dt**2.0)
+        F = jnp.hstack((F1, F2))
 
-#         M = jnp.concatenate([M_11, M_12, M_21, M_22])
-#         M_elements = M * jnp.ones((input_sequence.shape[0], 4 * A_diag.shape[0]))
+        _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
+        ys = xs[:, A_diag.shape[0] :]
 
-#         F1 = step * (1.0 / S) * Bu_elements
-#         F2 = step**2 * (1.0 / S) * Bu_elements
-#         F = jnp.hstack((F1, F2))
+        return ys
 
-#         _, xs = jax.lax.associative_scan(binary_operator, (M_elements, F))
-#         ys = xs[:, A_diag.shape[0] :]
+    def __call__(self, input_sequence):
+        # Materialize parameters
+        B_complex = self.B[..., 0] + 1j * self.B[..., 1]
+        C_complex = self.C[..., 0] + 1j * self.C[..., 1]
 
-#         return ys
+        # Project
+        dt = nn.sigmoid(self.dt)
+        A_diag = nn.relu(self.A_diag)
 
-#     def __call__(self, input_sequence):
-#         steps = nn.sigmoid(self.steps)
-#         B_complex = self.B[..., 0] + 1j * self.B[..., 1]
-#         C_complex = self.C[..., 0] + 1j * self.C[..., 1]
-#         G_diag = nn.relu(self.G_diag)
-#         A_boundary_low = (
-#             2 + steps * G_diag - 2 * jnp.sqrt(1 + steps * G_diag)
-#         ) / steps**2
-#         A_boundary_high = (
-#             2 + steps * G_diag + 2 * jnp.sqrt(1 + steps * G_diag)
-#         ) / steps**2
-#         A_diag = (
-#             A_boundary_low
-#             + nn.relu(self.A_diag - A_boundary_low)
-#             - nn.relu(self.A_diag - A_boundary_high)
-#         )
+        # Apply SSM
+        Bu_elements = jax.vmap(lambda u: B_complex @ u)(input_sequence)
+        ys = self._recurrence(A_diag, dt, Bu_elements)
+        xs = jax.vmap(lambda x, u: (C_complex @ x).real + self.D * u)(ys, input_sequence)
 
-#         ys = self._recurrence(A_diag, G_diag, B_complex, input_sequence, steps)
-
-#         # Apply SSM Output Operations Cx + Du
-#         Cy = jax.vmap(lambda x: (C_complex @ x).real)(ys)
-#         Du = jax.vmap(lambda u: self.D * u)(input_sequence)
-#         xs = Cy + Du
-
-#         return xs
-
+        return xs
+    
 
 class DampedIMEX1Layer(_AbstractLinOSSLayer):
     """
