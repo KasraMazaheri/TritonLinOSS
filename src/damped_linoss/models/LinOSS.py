@@ -68,13 +68,14 @@ class IMLayer(_AbstractLinOSSLayer):
         self, 
         state_dim: int, 
         hidden_dim: int, 
-        *args, 
+        A_max: float,
+        dt_std: float,
         key: PRNGKeyArray,
+        **kwargs, 
     ):
-        self.state_dim = state_dim
         A_key, B_key, C_key, D_key, dt_key, key = jr.split(key, 6)
-        self.dt = normal(stddev=0.5)(dt_key, (state_dim,))
-        self.A_diag = jr.uniform(A_key, shape=(state_dim,))
+        self.dt = normal(stddev=dt_std)(dt_key, (state_dim,))
+        self.A_diag = jr.uniform(A_key, shape=(state_dim,)) * A_max
         self.B = simple_uniform_init(B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim))
         self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
@@ -136,17 +137,18 @@ class IMEXLayer(_AbstractLinOSSLayer):
         self, 
         state_dim: int, 
         hidden_dim: int, 
-        *args, 
+        A_max: float, 
+        dt_std: float,
         key: PRNGKeyArray,
+        **kwargs,
     ):
-        self.state_dim = state_dim
         A_key, B_key, C_key, D_key, dt_key, key = jr.split(key, 6)
-        self.dt = normal(stddev=0.5)(dt_key, (state_dim,))
-        self.A_diag = jr.uniform(A_key, shape=(state_dim,))
+        self.dt = normal(stddev=dt_std)(dt_key, (state_dim,))
+        self.A_diag = jr.uniform(A_key, shape=(state_dim,)) * A_max
         self.B = simple_uniform_init(B_key, shape=(state_dim, hidden_dim, 2), std=1.0 / jnp.sqrt(hidden_dim))
         self.C = simple_uniform_init(C_key, shape=(hidden_dim, state_dim, 2), std=1.0 / jnp.sqrt(state_dim))
         self.D = normal(stddev=1.0)(D_key, (hidden_dim,))
-
+    
     def _recurrence(self, A_diag, dt, Bu_elements):
         """Compute the LxP output of LinOSS-IMEX given an LxH input.
         Args:
@@ -220,8 +222,8 @@ class DampedIMEX1Layer(_AbstractLinOSSLayer):
         A_min: float, 
         A_max: float, 
         dt_std: float, 
-        *, 
         key: PRNGKeyArray,
+        **kwargs,
     ):
         self.state_dim = state_dim
         init_key, B_key, C_key, D_key, key = jr.split(key, 5)
@@ -398,8 +400,8 @@ class DampedIMEX2Layer(_AbstractLinOSSLayer):
         A_min: float, 
         A_max: float, 
         dt_std: float, 
-        *, 
         key: PRNGKeyArray,
+        **kwargs,
     ):
         self.state_dim = state_dim
         init_key, B_key, C_key, D_key, key = jr.split(key, 5)
@@ -575,8 +577,8 @@ class DampedIMLayer(_AbstractLinOSSLayer):
         A_min: float, 
         A_max: float, 
         dt_std: float, 
-        *, 
         key: PRNGKeyArray,
+        **kwargs,
     ):
         self.state_dim = state_dim
         init_key, B_key, C_key, D_key, key = jr.split(key, 5)
@@ -753,8 +755,8 @@ class DampedEXLayer(_AbstractLinOSSLayer):
         A_min: float, 
         A_max: float, 
         dt_std: float, 
-        *, 
         key: PRNGKeyArray,
+        **kwargs,
     ):
         self.state_dim = state_dim
         init_key, B_key, C_key, D_key, key = jr.split(key, 5)
@@ -924,14 +926,13 @@ class LinOSSBlock(eqx.Module):
         G_max: float, 
         dt_std: float, 
         drop_rate: float,
-        *,
         key: PRNGKeyArray,
+        **kwargs,
     ):
         ssmkey, glukey = jr.split(key, 2)
         layer_map = {
-            # "IM": IMLayer,
-            # "IMEX": IMEXLayer,
-            # "Damped": DampedLayer,
+            "IM": IMLayer,
+            "IMEX": IMEXLayer,
             "DampedIMEX1": DampedIMEX1Layer,
             "DampedIMEX2": DampedIMEX2Layer,
             "DampedIM": DampedIMLayer,
@@ -944,18 +945,18 @@ class LinOSSBlock(eqx.Module):
             input_size=hidden_dim, axis_name="batch", channelwise_affine=False, mode="batch"
         )
         self.layer = layer_map[layer_name](
-            state_dim,
-            hidden_dim,
-            initialization,
-            r_min,
-            r_max,
-            theta_min,
-            theta_max,
-            A_min, 
-            A_max, 
-            G_min, 
-            G_max, 
-            dt_std, 
+            state_dim=state_dim,
+            hidden_dim=hidden_dim,
+            initialization=initialization,
+            r_min=r_min,
+            r_max=r_max,
+            theta_min=theta_min,
+            theta_max=theta_max,
+            A_min=A_min, 
+            A_max=A_max, 
+            G_min=G_min, 
+            G_max=G_max, 
+            dt_std=dt_std, 
             key=ssmkey,
         )
         self.glu = GLU(hidden_dim, hidden_dim, key=glukey)
@@ -1006,9 +1007,9 @@ class LinOSS(eqx.Module):
         G_min: float, 
         G_max: float, 
         dt_std: float, 
-        drop_rate: float = 0.1,
-        *,
+        drop_rate: float,
         key: PRNGKeyArray,
+        **kwargs,
     ):
         linear_encoder_key, *block_keys, linear_decoder_key = jr.split(
             key, num_blocks + 2
@@ -1016,20 +1017,20 @@ class LinOSS(eqx.Module):
         self.linear_encoder = eqx.nn.Linear(input_dim, hidden_dim, key=linear_encoder_key)
         self.blocks = [
             LinOSSBlock(
-                layer_name,
-                state_dim,
-                hidden_dim,
-                initialization,
-                r_min,
-                r_max,
-                theta_min,
-                theta_max,
-                A_min, 
-                A_max, 
-                G_min, 
-                G_max, 
-                dt_std, 
-                drop_rate,
+                layer_name=layer_name,
+                state_dim=state_dim,
+                hidden_dim=hidden_dim,
+                initialization=initialization,
+                r_min=r_min,
+                r_max=r_max,
+                theta_min=theta_min,
+                theta_max=theta_max,
+                A_min=A_min, 
+                A_max=A_max, 
+                G_min=G_min, 
+                G_max=G_max, 
+                dt_std=dt_std, 
+                drop_rate=drop_rate,
                 key=key,
             )
             for key in block_keys
