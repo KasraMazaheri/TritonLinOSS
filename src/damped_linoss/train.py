@@ -33,9 +33,13 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 import equinox as eqx
+from jaxtyping import PyTree
 
 from damped_linoss.data.create_dataset import create_dataset
 from damped_linoss.models.create_model import create_model
+from damped_linoss.models.LinOSS import LinOSS
+from damped_linoss.models.LRU import LRU
+from damped_linoss.models.S5 import S5
 
 # Ignore warning in loss fn calculation
 warnings.simplefilter("ignore", category=jnp.ComplexWarning)
@@ -67,6 +71,7 @@ def create_warmup_cosine_schedule(peak_lr, num_steps, warmup_ratio=0.1, final_lr
         num_steps: Total number of training steps
         warmup_ratio: Fraction of training for warmup (default 0.1 = 10%)
         final_lr: Final learning rate after cosine decay (default 1e-7)
+
     Returns:
         Optax schedule function
     """
@@ -95,28 +100,74 @@ def create_warmup_cosine_schedule(peak_lr, num_steps, warmup_ratio=0.1, final_lr
     return schedule
 
 
-def create_optimizer(lr, weight_decay, num_steps, use_warmup_cosine):
+def create_ssm_label_fn(model: PyTree):
     """
-    Create optimizer.
+    Create a label function that identifies SSM parameters for multi-transform optimizer.
+    """
+    if isinstance(model, LRU):
+        ssm_params = ['nu_log', 'theta_log', 'B_re', 'B_im', 'gamma_log']
+    elif isinstance(model, S5):
+        ssm_params = ['Lambda', 'B', 'C', 'log_Lambda']
+    elif isinstance(model, LinOSS):
+        ssm_params = ['A_diag', 'G_diag', 'B', 'C', 'D', 'dt']
+    else:
+        ssm_params = []
+
+    def get_label(path, param):
+        return "ssm" if any(str(k) in ssm_params for k in path) else "main"
+            
+    def label_fn(params):
+        return jax.tree_util.tree_map_with_path(get_label, params)
+            
+    return label_fn
+
+
+def create_optimizer(
+    model: PyTree, 
+    num_steps: int, 
+    lr: float, 
+    ssm_lr_factor: float, 
+    weight_decay: float, 
+    use_warmup_cosine: bool
+):
+    """
+    Create optimizer with or without cosine annealing, weight decay, and parameter splits.
     
     Args:
-        lr: Base learning rate
-        weight_decay: Weight decay coefficient
+        model: Equinox model
         num_steps: Total training steps
+        lr: Base learning rate
+        ssm_lr_factor: Learning rate factor for SSM parameters
+        weight_decay: Weight decay coefficient
         use_warmup_cosine: Whether to use warmup + cosine schedule
     
     Returns:
-        Configured optimizer
+        Configured optimizer and state
     """
+    # Cosine annealing
+    ssm_lr = lr * ssm_lr_factor
     if use_warmup_cosine:
         schedule = create_warmup_cosine_schedule(lr, num_steps)
+        ssm_schedule = create_warmup_cosine_schedule(ssm_lr, num_steps)
+    else:
+        schedule = lr
+        ssm_schedule = ssm_lr
+
+    # Whether or not to split optimizer
+    if jnp.isclose(ssm_lr_factor, 1.0):
         opt = optax.adamw(learning_rate=schedule, weight_decay=weight_decay)
     else:
-        if weight_decay > 0:
-            opt = optax.adamw(learning_rate=lr, weight_decay=weight_decay)
-        else:   
-            opt = optax.adam(learning_rate=lr)
-    return opt
+        label_fn = create_ssm_label_fn(model)
+        optimizers = {
+            'main': optax.adamw(learning_rate=schedule, weight_decay=weight_decay),
+            'ssm': optax.adamw(learning_rate=ssm_schedule, weight_decay=0.0),
+        }
+        opt = optax.multi_transform(optimizers, label_fn)
+
+    # Initialize
+    opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
+
+    return opt, opt_state
 
 
 @eqx.filter_jit
@@ -204,14 +255,14 @@ def train_model(
     print_steps: int,
     batch_size: int,
     lr: float,
+    ssm_lr_factor: float,
     weight_decay: float,
     cosine_annealing: bool,
     key: jax.Array,
 ):
     # Initialize model optimizer
     batchkey, key = jr.split(key, 2)
-    opt = create_optimizer(lr, weight_decay=weight_decay, num_steps=num_steps, use_warmup_cosine=cosine_annealing)
-    opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
+    opt, opt_state = create_optimizer(model, num_steps, lr, ssm_lr_factor, weight_decay, cosine_annealing)
     
     # Model saving
     model_filename = os.path.join(run_folder, "model.eqx")
@@ -361,6 +412,7 @@ def create_dataset_model_and_train(
         print_steps=safe_load(hyperparameters, "print_steps", int),
         batch_size=safe_load(hyperparameters, "batch_size", int),
         lr=safe_load(hyperparameters, "lr", float),
+        ssm_lr_factor=safe_load(hyperparameters, "ssm_lr_factor", float),
         weight_decay=safe_load(hyperparameters, "weight_decay", float),
         cosine_annealing=safe_load(hyperparameters, "cosine_annealing", bool),
         key=train_key,

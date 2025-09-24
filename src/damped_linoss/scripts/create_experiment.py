@@ -73,6 +73,7 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
     G_max = [1.0, 32.0]
     # dt_std = [0.0, 1.0]
     # drop_rate = [0.0, 0.1]
+    ssm_lr_factor = [0.25, 0.5, 0.75, 1.0]
     weight_decay = [0.0, 0.05]
     cosine_annealing = [False, True]
 
@@ -91,6 +92,7 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
         _G_max = float(np.random.uniform(*G_max))
         # _ds = float(np.random.uniform(*dt_std))
         # _dr = float(np.random.uniform(*drop_rate))
+        _ssm_lr_factor = float(np.random.choice(ssm_lr_factor))
         _weight_decay = float(np.random.uniform(*weight_decay))
         _cosine_annealing = bool(np.random.choice(cosine_annealing))
 
