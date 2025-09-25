@@ -14,48 +14,58 @@ import itertools
 import numpy as np
 
 
-# def create_grid_experiment(experiment_folder, model_name, dataset_name):
-#     # Hyperparameter sweep
-#     seed = [0, 1, 2, 3, 4]
-#     lr = [1e-3, 1e-4, 1e-5]
-#     state_dim = [16, 64, 256]
-#     hidden_dim = [16, 64, 128]
-#     num_blocks = [2, 4, 6]
-#     include_time = [False, True]
+def create_grid_experiment(experiment_folder, model_name, dataset_name):
+    # Hyperparameter sweep
+    seed = [0, 1, 2, 3, 4]
+    lr = [1e-4]
+    state_dim = [128]
+    hidden_dim = [128]
+    num_blocks = [2, 4, 6]
+    include_time = [False]
 
-#     combos = itertools.product(seed, lr, state_dim, hidden_dim, num_blocks, include_time)
+    combos = itertools.product(seed, lr, state_dim, hidden_dim, num_blocks, include_time)
 
-#     for i, (se, lr, sd, hd, nb, tm) in enumerate(combos):
-#         hyperparameters = {
-#             "seed": se,
-#             "model_name": model_name,
-#             "dataset_name": dataset_name,
-#             "data_dir": "/lustre/home/jboyer/damped-linoss/data",
-#             "lr": lr,
-#             "num_steps": 100000,
-#             "print_steps": 1000,
-#             "batch_size": 16,
-#             "classification": True,
-#             "use_presplit": True,
-#             "include_time": tm,
-#             "time_duration": 1.0,
-#             "tanh_output": False,
-#             "output_step": 1,
-#             "layer_name": "Damped",
-#             "num_blocks": nb,
-#             "state_dim": sd,
-#             "hidden_dim": hd,
-#             "r_min": 0.9,
-#             "r_max": 1.0,
-#             "theta_max": np.pi,
-#             "drop_rate": 0.1
-#         }
+    for i, (_seed, _learning_rate, _state_dim, _hidden_dim, _num_blocks, _include_time) in enumerate(combos):
+        hyperparameters = {
+            "seed": _seed,
+            "model_name": model_name,
+            "dataset_name": dataset_name,
+            "data_dir": "data",
+            "classification": False,
+            "use_presplit": True,
+            "output_step": 1,
+            "num_steps": 50000,
+            "print_steps": 100,
+            "batch_size": 32,
+            "lr": _learning_rate,
+            "ssm_lr_factor": 1.0,  # _ssm_lr_factor,
+            "weight_decay": 0.0,  # _weight_decay,
+            "cosine_annealing": False,  # _cosine_annealing,
+            "include_time": _include_time,
+            "time_duration": 1.0,
+            "tanh_output": False,
+            "layer_name": "DampedIMEX1",
+            "num_blocks": _num_blocks,
+            "state_dim": _state_dim,
+            "hidden_dim": _hidden_dim,
+            "initialization": "ring",
+            "r_min": 0.9,  # _r_min,
+            "r_max": 1.0,
+            "theta_min": 0.0,
+            "theta_max": np.pi,  # _theta_max,
+            "A_min": 0.0,
+            "A_max": 1.0,
+            "G_min": 0.0,
+            "G_max": 1.0,
+            "dt_std": 0.5,
+            "drop_rate": 0.1,
+        }
 
-#         # Write config
-#         run_folder = experiment_folder + f"run_{i:03}/"
-#         os.makedirs(run_folder, exist_ok=True)
-#         with open(run_folder + "hyperparameters.yaml", "w") as file:
-#             hyperparameters = yaml.dump(hyperparameters, file)
+        # Write config
+        run_folder = experiment_folder + f"run_{i:03}/"
+        os.makedirs(run_folder, exist_ok=True)
+        with open(run_folder + "hyperparameters.yaml", "w") as file:
+            hyperparameters = yaml.dump(hyperparameters, file)
 
 
 def create_random_experiment(experiment_folder, model_name, dataset_name):
@@ -73,7 +83,6 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
     G_max = [1.0, 32.0]
     # dt_std = [0.0, 1.0]
     # drop_rate = [0.0, 0.1]
-    ssm_lr_factor = [0.25, 0.5, 0.75, 1.0]
     weight_decay = [0.0, 0.05]
     cosine_annealing = [False, True]
 
@@ -92,7 +101,7 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
         _G_max = float(np.random.uniform(*G_max))
         # _ds = float(np.random.uniform(*dt_std))
         # _dr = float(np.random.uniform(*drop_rate))
-        _ssm_lr_factor = float(np.random.choice(ssm_lr_factor))
+        # _ssm_lr_factor = float(np.random.choice(ssm_lr_factor))
         _weight_decay = float(np.random.uniform(*weight_decay))
         _cosine_annealing = bool(np.random.choice(cosine_annealing))
 
@@ -100,7 +109,7 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
             "seed": _seed,
             "model_name": model_name,
             "dataset_name": dataset_name,
-            "data_dir": "/lustre/home/jboyer/damped-linoss/data",
+            "data_dir": "data",
             "classification": True,
             "use_presplit": True,
             "output_step": 1,
@@ -108,8 +117,9 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
             "print_steps": 1000,
             "batch_size": _batch_size,
             "lr": _learning_rate,
-            "weight_decay": _weight_decay,
-            "cosine_annealing": _cosine_annealing,
+            "ssm_lr_factor": 1.0,  # _ssm_lr_factor,
+            "weight_decay": 0.,  # _weight_decay,
+            "cosine_annealing": False,  # _cosine_annealing,
             "include_time": _include_time,
             "time_duration": 1.0,
             "tanh_output": False,
@@ -118,10 +128,10 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
             "state_dim": _state_dim,
             "hidden_dim": _hidden_dim,
             "initialization": "ring",
-            "r_min": _r_min,
+            "r_min": 0.9,  # _r_min,
             "r_max": 1.0,
             "theta_min": 0.0,
-            "theta_max": _theta_max,
+            "theta_max": np.pi,  # _theta_max,
             "A_min": 0.0,
             "A_max": _A_max,
             "G_min": 0.0,
@@ -139,12 +149,12 @@ def create_random_experiment(experiment_folder, model_name, dataset_name):
 
 if __name__ == "__main__":
     model_name = "LinOSS"
-    dataset_name = "SequentialCifar10"
-    experiment_folder = f"experiments/D-LinOSS-IMEX1/{dataset_name}/"
+    dataset_name = "Adding500"
+    experiment_folder = f"experiments/D-LinOSS-IMEX1-RT-Last/{dataset_name}/"
 
     if os.path.exists(experiment_folder):
         raise RuntimeError("Experiment already exists!")
 
-    # create_grid_experiment(experiment_folder, model_name, dataset_name)
-    create_random_experiment(experiment_folder, model_name, dataset_name)
+    create_grid_experiment(experiment_folder, model_name, dataset_name)
+    # create_random_experiment(experiment_folder, model_name, dataset_name)
                                                                            
