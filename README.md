@@ -49,29 +49,23 @@ The UEA datasets are a collection of multivariate time series classification ben
 
 The PPG-DaLiA dataset is a multivariate time series regression dataset, where the aim is to predict a person’s heart rate using data collected from a wrist-worn device. The dataset can be downloaded from the <a href="https://archive.ics.uci.edu/dataset/495/ppg+dalia">UCI Machine Learning Repository</a>. The data should be unzipped and saved in the `data/raw` folder in the following format `PPG_FieldStudy/S{i}/S{i}.pkl`. The data can be preprocessed by running the `scripts/process_ppg.py` script.
 
-### The Weather Dataset
-
-(TODO: explain downloading procedure)
-
 ---
 
 ## Experiments
 
 The code for training and evaluating the models is contained in `linoss/train.py`. Experiments can be run using the `run_experiment.py` script. This script requires you to specify a folder containing hyperparameter spreads for a given experiment. These experiment folders can be generated using `create_experiment.py`.
 
+To create a set of experiments, manually define the grid or random search by editing the file `src/damped_linoss/scripts/create_experiment.py`. Then, run:
+```
+uv run python -m damped_linoss.scripts.create_experiment
+```
+
+To run an experiment:
+```
+uv run python -m damped_linoss.scripts.run_experiments --experiment_folder <path/to/experiment>
+```
+
 To view the outputs of an experiment:
 ```
-uv run process_results.py <experiment_folder>
+uv run python -m damped_linoss.scripts.process_results.py <path/to/experiment>
 ```
-
----
-
-## Reproducing the Results
-
-(TODO: re-running experiments with new codebase)
-
-```
-uv run run_experiments.py --experiment_folder experiments/D-LinOSS/PPG
-```
-
----
