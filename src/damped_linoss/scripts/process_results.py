@@ -32,7 +32,7 @@ def make_group_key(hparams, keys):
 
 def main(exp_root):
     groups = defaultdict(list)
-    group_keys_to_use = ["model_name", "dataset_name", "seed", "lr", "state_dim", "hidden_dim", "num_blocks", "include_time", "weight_decay", "cosine_annealing", "batch_size", "r_min", "r_max", "theta_min", "theta_max", "A_min", "A_max", "G_min", "G_max", "dt_std", "drop_rate"]
+    group_keys_to_use = ["model_name", "dataset_name", "lr", "state_dim", "hidden_dim", "num_blocks", "include_time", "weight_decay", "cosine_annealing", "batch_size", "r_min", "r_max", "theta_min", "theta_max", "A_min", "A_max", "G_min", "G_max", "dt_std", "drop_rate"]
 
     # Find all results.txt in run_XXX folders under exp_root
     pattern = os.path.join(exp_root, "run_*/test_metric.txt")
@@ -72,7 +72,12 @@ def main(exp_root):
         try:
             log_metrics = np.load(metric_path)
             average_time = np.mean(log_metrics[:, 1])
-            val_metric = np.max(log_metrics[:, 3])
+            valid_metrics = log_metrics[:, 3][~np.isnan(log_metrics[:, 3])]
+            if valid_metrics.size > 0:
+                val_metric = np.min(valid_metrics)
+            else:
+                val_metric = float('nan')  # or skip this run
+                print(f"  Warning: {metric_path} has only NaNs in column 3")
         except Exception as e:
             print(f"Failed to read {metric_path}: {e}")
             continue
@@ -115,7 +120,8 @@ def main(exp_root):
             "num_runs": num,
         })
 
-    summaries.sort(key=lambda x: x["val_mean"])
+    summaries.sort(key=lambda x: x["val_mean"] if not math.isnan(x["val_mean"]) else float('inf'), reverse=True)
+    # summaries.sort(key=lambda x: x["test_mean"], reverse=True)
 
     for result in summaries:
         print(f"Test: [{result['test_mean']:.6f} ± {result['test_std']:.6f}]")

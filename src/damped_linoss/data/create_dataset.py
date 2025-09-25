@@ -654,10 +654,96 @@ def load_sMNIST_dataset():
     return data, labels, lambda x: x
 
 
-def load_Adding_dataset():
+def load_Adding500_dataset():
+    sql_train = 500
+    sql_val = 500
+    sql_test = 2000
+    size_train = 7000
+    size_val = 1500
+    size_test = 1500
+
+    train_key = jax.random.PRNGKey(0)
+    val_key = jax.random.PRNGKey(1)
+    test_key = jax.random.PRNGKey(2)
+
+    def generate_batch(bsz, sql, key):
+        """
+        data: (bsz, sql, 2)
+        labels: (bsz, 1, 1)
+        """
+        key1, key2, key3 = jr.split(key, 3)
+        values = jr.uniform(key1, shape=(bsz, sql, 1))
+        half = sql // 2
+        half_1 = jr.randint(key2, (bsz,), 0, half)
+        half_2 = jr.randint(key3, (bsz,), half, sql)
+        def set_indices(idx1, idx2):
+            arr = jnp.zeros((sql,))
+            arr = arr.at[idx1].set(1)
+            arr = arr.at[idx2].set(1)
+            return arr
+        indices_1d = jax.vmap(set_indices)(half_1, half_2)
+        indices = jnp.expand_dims(indices_1d, axis=-1)  # shape: (bsz, sql, 1)
+        data = jnp.concatenate((values, indices), axis=2)
+        labels = (values * indices).sum(axis=1, keepdims=True)
+        return data, labels
+
+    train_data, train_labels = generate_batch(size_train, sql_train, train_key)
+    val_data, val_labels = generate_batch(size_val, sql_val, val_key)
+    test_data, test_labels = generate_batch(size_test, sql_test, test_key)
+
+    data = (train_data, val_data, test_data)
+    labels = (train_labels, val_labels, test_labels)
+
+    return data, labels, lambda x: x
+
+
+def load_Adding2000_dataset():
     sql_train = 2000
     sql_val = 2000
     sql_test = 2000
+    size_train = 7000
+    size_val = 1500
+    size_test = 1500
+
+    train_key = jax.random.PRNGKey(0)
+    val_key = jax.random.PRNGKey(1)
+    test_key = jax.random.PRNGKey(2)
+
+    def generate_batch(bsz, sql, key):
+        """
+        data: (bsz, sql, 2)
+        labels: (bsz, 1, 1)
+        """
+        key1, key2, key3 = jr.split(key, 3)
+        values = jr.uniform(key1, shape=(bsz, sql, 1))
+        half = sql // 2
+        half_1 = jr.randint(key2, (bsz,), 0, half)
+        half_2 = jr.randint(key3, (bsz,), half, sql)
+        def set_indices(idx1, idx2):
+            arr = jnp.zeros((sql,))
+            arr = arr.at[idx1].set(1)
+            arr = arr.at[idx2].set(1)
+            return arr
+        indices_1d = jax.vmap(set_indices)(half_1, half_2)
+        indices = jnp.expand_dims(indices_1d, axis=-1)  # shape: (bsz, sql, 1)
+        data = jnp.concatenate((values, indices), axis=2)
+        labels = (values * indices).sum(axis=1, keepdims=True)
+        return data, labels
+
+    train_data, train_labels = generate_batch(size_train, sql_train, train_key)
+    val_data, val_labels = generate_batch(size_val, sql_val, val_key)
+    test_data, test_labels = generate_batch(size_test, sql_test, test_key)
+
+    data = (train_data, val_data, test_data)
+    labels = (train_labels, val_labels, test_labels)
+
+    return data, labels, lambda x: x
+
+
+def load_Adding5000_dataset():
+    sql_train = 5000
+    sql_val = 5000
+    sql_test = 5000
     size_train = 7000
     size_val = 1500
     size_test = 1500
@@ -731,8 +817,12 @@ def create_dataset(
         data, labels, data_out_func = load_MNIST_dataset()
     elif name == "sMNIST":
         data, labels, data_out_func = load_sMNIST_dataset()
-    elif name == "Adding":
-        data, labels, data_out_func = load_Adding_dataset()
+    elif name == "Adding500":
+        data, labels, data_out_func = load_Adding500_dataset()
+    elif name == "Adding2000":
+        data, labels, data_out_func = load_Adding2000_dataset()
+    elif name == "Adding5000":
+        data, labels, data_out_func = load_Adding5000_dataset()
     else:
         raise ValueError(f"Unknown dataset: {name}")
 
