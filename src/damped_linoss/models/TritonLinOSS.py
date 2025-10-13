@@ -8,6 +8,140 @@ import equinox as eqx
 
 from src.damped_linoss.models.common import GLU, simple_uniform_init
 
+import triton
+import triton.language as tl
+import torch.nn as nn
+
+
+@triton.jit
+def prep_scan_kernel(
+    # --- Input Pointers ---
+    x_ptr,
+    A_diag_ptr,
+    steps_ptr,
+    B_ptr,
+    # --- Output Pointers ---
+    F_ptr,
+    BS_ptr,
+    # --- Dimensions ---
+    L, P, H,
+    # --- Strides ---
+    stride_x_l, stride_x_h,
+    stride_b_p, stride_b_h, stride_b_c,
+    stride_f_l, stride_f_p, stride_f_f, stride_f_c,
+    stride_bs_l, stride_bs_p, stride_bs_f, stride_bs_c,
+    # --- Compile-time Constants ---
+    TILE_L: tl.constexpr,
+    TILE_P: tl.constexpr,
+    MICROTILE_H: tl.constexpr,
+):
+    """
+    Triton kernel for the first phase of the LinOSS recurrence.
+    - Grid: (cdiv(L, TILE_L), cdiv(P, TILE_P))
+    - Each thread block computes a (TILE_L, TILE_P) portion of the state space.
+    - It computes Bu and F on-the-fly, stores them in shared memory,
+      performs a local scan, and writes only final accumulated state of the
+      block and the F back to HBM.
+    """
+    # 1. ------------- GET PROGRAM IDs & DEFINE OFFSETS -----------------
+    bidl = tl.program_id(0)
+    bidp = tl.program_id(1)
+
+    p_offsets = bidp * TILE_P + tl.arange(0, TILE_P)
+    p2_offsets = bidp * TILE_P + tl.arange(0, 2 * TILE_P) % TILE_P
+    l_offsets = bidl * TILE_L + tl.arange(0, TILE_L)
+    h_offsets = tl.arange(0, MICROTILE_H)
+    c_offsets = tl.arange(0, 2 * TILE_P) // TILE_P # Handles complex parts
+
+    p_mask = p_offsets < P
+    l_mask = l_offsets < L
+
+    # 2. ------------- LOAD BLOCK-CONSTANT PARAMETERS --------------------
+    # These are constant for all `l` within this block's tile.
+    # Shapes: (TILE_P,)
+    A_diag = tl.load(A_diag_ptr + p_offsets, mask=p_mask, other=0.0)
+    steps = tl.load(steps_ptr + p_offsets, mask=p_mask, other=0.0)
+    
+    # This is the 'A' part of our (A, b) scan tuple and is constant for this block
+    # Shapes: (TILE_P,)
+    schur_comp = 1.0 / (1.0 + steps * steps * A_diag)
+    M_11 = 1.0 - steps * steps * A_diag * schur_comp
+    M_12 = -1.0 * steps * A_diag * schur_comp
+    M_21 = steps * schur_comp
+    M_22 = schur_comp
+    
+    # 3. ------------- COMPUTE F ON-THE-FLY & STORE TO SHARED MEMORY -----
+    # Shared memory to hold F values for the block
+    # F is complex, so we store its real and imaginary parts.
+    # So we need TILE_L x TILE_P x 2 elements for F1 and F2 each.
+    F1 = tl.zeros((TILE_L, TILE_P, 2), dtype=tl.float32)
+    F2 = tl.zeros((TILE_L, TILE_P, 2), dtype=tl.float32)
+    
+    p_complex_offsets = p2_offsets * stride_b_p + c_offsets * stride_b_c
+    p_complex_mask = p2_offsets < P
+
+    for h in range(0, H, MICROTILE_H):
+        h_micro_tile_mask = (h + h_offsets[None, :]) < H
+        B_mask = p_complex_mask[:, None] & h_micro_tile_mask
+        x_mask = l_mask[:, None] & h_micro_tile_mask
+
+        B_block_ptr = B_ptr + h_offsets[None, :] * stride_b_h + p_complex_offsets[:, None]
+        x_block_ptr = x_ptr + h_offsets[None, :] * stride_x_h + l_offsets[:, None] * stride_x_l
+
+        # We will load real and imag parts together
+        B = tl.load(B_block_ptr, mask=B_mask, other=0.0)
+        x = tl.load(x_block_ptr, mask=x_mask, other=0.0)
+
+        # Compute Bu for the micro-tile. Shape: (TILE_L, TILE_P*2)
+        Bu = tl.dot(x, B.T)
+
+        # Apply the M matrix and steps to get F1 and F2 and accumulate in shared memory
+        F1 += (M_11 * steps)[None, :, None] * Bu.reshape(TILE_L, TILE_P, 2)
+        F2 += (M_21 * steps)[None, :, None] * Bu.reshape(TILE_L, TILE_P, 2)
+
+    tl.debug_barrier() # Sync threads to ensure all of F is written
+
+    # 4. ------------- STORE TO F_PTR ------------------------------------
+    f_p2_offsets = p2_offsets * stride_f_p + c_offsets * stride_f_c
+    f_mask = l_mask[:, None] & p_complex_mask[None, :]
+    f_tile_ptr = F_ptr + l_offsets[:, None] * stride_f_l + f_p2_offsets[None, :]
+
+    tl.store(f_tile_ptr + 0 * stride_f_f, F1.reshape(TILE_L, TILE_P * 2), mask=f_mask)
+    tl.store(f_tile_ptr + 1 * stride_f_f, F2.reshape(TILE_L, TILE_P * 2), mask=f_mask)
+
+    # 4. ------------- PERFORM INTRA-BLOCK SCAN (SEQUENTIAL) -------------
+    # We now have the 'b' part of our sequence in shared memory. The 'A' part
+    # is M_11, M_12, M_21, M_22, which is constant across a block.
+    # We scan sequentially over the TILE_L dimension.
+    f1_ptr = F_ptr + (bidl * TILE_L) * stride_f_l + p2_offsets * stride_f_p + c_offsets * stride_f_c
+    f2_ptr = f1_ptr + 1 * stride_f_f
+
+    b_acc_1 = tl.load(f1_ptr, mask=p_complex_mask).reshape(TILE_P, 2)
+    b_acc_2 = tl.load(f2_ptr, mask=p_complex_mask).reshape(TILE_P, 2)
+    A_acc_11, A_acc_12, A_acc_21, A_acc_22 = M_11, M_12, M_21, M_22
+    
+    for l_offset in range(1, min(TILE_L, L - bidl * TILE_L)):
+        b_j1 = tl.load(f1_ptr + l_offset * stride_f_l, mask=p_complex_mask).reshape(TILE_P, 2)
+        b_j2 = tl.load(f2_ptr + l_offset * stride_f_l, mask=p_complex_mask).reshape(TILE_P, 2)
+        
+        # This is the `binary_operator` logic, applied in parallel for TILE_P states
+        # A_i is the accumulator (A_acc), b_i is the accumulator (b_acc)
+        # A_j is the constant M matrix, b_j is the current element b_j   
+        A_new_11 = M_11 * A_acc_11 + M_12 * A_acc_21
+        A_new_12 = M_11 * A_acc_12 + M_12 * A_acc_22
+        A_new_21 = M_21 * A_acc_11 + M_22 * A_acc_21
+        A_new_22 = M_21 * A_acc_12 + M_22 * A_acc_22
+        A_acc_11, A_acc_12, A_acc_21, A_acc_22 = A_new_11, A_new_12, A_new_21, A_new_22
+        
+        b_new_1 = M_11[:, None] * b_acc_1 + M_12[:, None] * b_acc_2 + b_j1
+        b_new_2 = M_21[:, None] * b_acc_1 + M_22[:, None] * b_acc_2 + b_j2
+        b_acc_1, b_acc_2 = b_new_1, b_new_2
+        
+    # 5. ------------- WRITE FINAL BLOCK STATE TO HBM --------------------
+    BS_tile_ptr = BS_ptr + bidl * stride_bs_l + p2_offsets * stride_bs_p + c_offsets * stride_bs_c
+    tl.store(BS_tile_ptr + 0 * stride_bs_f, b_acc_1.reshape(TILE_P * 2), mask=p_complex_mask)
+    tl.store(BS_tile_ptr + 1 * stride_bs_f, b_acc_2.reshape(TILE_P * 2), mask=p_complex_mask)
+
 
 # Parallel scan operations
 @jax.vmap
