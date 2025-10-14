@@ -16,20 +16,17 @@ import torch.nn as nn
 @triton.jit
 def prep_scan_kernel(
     # --- Input Pointers ---
-    x_ptr,
-    A_diag_ptr,
-    steps_ptr,
-    B_ptr,
+    x_ptr, A_diag_ptr, steps_ptr, B_ptr,
     # --- Output Pointers ---
-    F_ptr,
-    BS_ptr,
+    F_ptr, As_ptr, Bs_ptr,
     # --- Dimensions ---
     L, P, H,
     # --- Strides ---
     stride_x_l, stride_x_h,
     stride_b_p, stride_b_h, stride_b_c,
-    stride_f_l, stride_f_p, stride_f_f, stride_f_c,
-    stride_bs_l, stride_bs_p, stride_bs_f, stride_bs_c,
+    stride_f_l, stride_f_p, stride_f_s, stride_f_c,
+    stride_as_l, stride_as_p, stride_as_s,
+    stride_bs_l, stride_bs_p, stride_bs_s, stride_bs_c,
     # --- Compile-time Constants ---
     TILE_L: tl.constexpr,
     TILE_P: tl.constexpr,
@@ -106,15 +103,15 @@ def prep_scan_kernel(
     f_mask = l_mask[:, None] & p_complex_mask[None, :]
     f_tile_ptr = F_ptr + l_offsets[:, None] * stride_f_l + f_p2_offsets[None, :]
 
-    tl.store(f_tile_ptr + 0 * stride_f_f, F1.reshape(TILE_L, TILE_P * 2), mask=f_mask)
-    tl.store(f_tile_ptr + 1 * stride_f_f, F2.reshape(TILE_L, TILE_P * 2), mask=f_mask)
+    tl.store(f_tile_ptr + 0 * stride_f_s, F1.reshape(TILE_L, TILE_P * 2), mask=f_mask)
+    tl.store(f_tile_ptr + 1 * stride_f_s, F2.reshape(TILE_L, TILE_P * 2), mask=f_mask)
 
     # 4. ------------- PERFORM INTRA-BLOCK SCAN (SEQUENTIAL) -------------
     # We now have the 'b' part of our sequence in shared memory. The 'A' part
     # is M_11, M_12, M_21, M_22, which is constant across a block.
     # We scan sequentially over the TILE_L dimension.
     f1_ptr = F_ptr + (bidl * TILE_L) * stride_f_l + p2_offsets * stride_f_p + c_offsets * stride_f_c
-    f2_ptr = f1_ptr + 1 * stride_f_f
+    f2_ptr = f1_ptr + 1 * stride_f_s
 
     b_acc_1 = tl.load(f1_ptr, mask=p_complex_mask).reshape(TILE_P, 2)
     b_acc_2 = tl.load(f2_ptr, mask=p_complex_mask).reshape(TILE_P, 2)
@@ -138,9 +135,15 @@ def prep_scan_kernel(
         b_acc_1, b_acc_2 = b_new_1, b_new_2
         
     # 5. ------------- WRITE FINAL BLOCK STATE TO HBM --------------------
-    BS_tile_ptr = BS_ptr + bidl * stride_bs_l + p2_offsets * stride_bs_p + c_offsets * stride_bs_c
-    tl.store(BS_tile_ptr + 0 * stride_bs_f, b_acc_1.reshape(TILE_P * 2), mask=p_complex_mask)
-    tl.store(BS_tile_ptr + 1 * stride_bs_f, b_acc_2.reshape(TILE_P * 2), mask=p_complex_mask)
+    Bs_tile_ptr = Bs_ptr + bidl * stride_bs_l + p2_offsets * stride_bs_p + c_offsets * stride_bs_c
+    tl.store(Bs_tile_ptr + 0 * stride_bs_s, b_acc_1.reshape(TILE_P * 2), mask=p_complex_mask)
+    tl.store(Bs_tile_ptr + 1 * stride_bs_s, b_acc_2.reshape(TILE_P * 2), mask=p_complex_mask)
+
+    As_tile_ptr = As_ptr + bidl * stride_as_l + p_offsets * stride_as_p
+    tl.store(As_tile_ptr + 0 * stride_as_s, A_acc_11, mask=p_mask)
+    tl.store(As_tile_ptr + 1 * stride_as_s, A_acc_12, mask=p_mask)
+    tl.store(As_tile_ptr + 2 * stride_as_s, A_acc_21, mask=p_mask)
+    tl.store(As_tile_ptr + 3 * stride_as_s, A_acc_22, mask=p_mask)
 
 
 # Parallel scan operations
