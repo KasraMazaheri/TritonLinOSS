@@ -146,6 +146,61 @@ def prep_scan_kernel(
     tl.store(As_tile_ptr + 3 * stride_as_s, A_acc_22, mask=p_mask)
 
 
+@triton.jit
+def scan_kernel(
+    # --- Input Pointers ---
+    As_ptr, Bs_ptr,
+    # --- Dimensions ---
+    num_l_blocks,
+    # --- Strides ---
+    stride_as_l, stride_as_p, stride_as_s,
+    stride_bs_l, stride_bs_p, stride_bs_s, stride_bs_c,
+):
+    """
+    Triton kernel for the second phase of the LinOSS recurrence, computing the scan over blocks.
+    - Grid: (P,)
+    - Each program instance computes the scan for one state dimension `p` across all blocks.
+    """
+    bidp = tl.program_id(0)
+    c_offsets = tl.arange(0, 2)
+    for l_offset in range(0, num_l_blocks):
+        # Load the (A, b) tuples for the current tile of blocks
+        As_tile_ptr = As_ptr + bidp * stride_as_p + stride_as_l * l_offset
+        Bs_tile_ptr = Bs_ptr + bidp * stride_bs_p + stride_bs_l * l_offset + c_offsets * stride_bs_c
+
+        A_tile_11 = tl.load(As_tile_ptr + 0 * stride_as_s)
+        A_tile_12 = tl.load(As_tile_ptr + 1 * stride_as_s)
+        A_tile_21 = tl.load(As_tile_ptr + 2 * stride_as_s)
+        A_tile_22 = tl.load(As_tile_ptr + 3 * stride_as_s)
+
+        b_tile_1 = tl.load(Bs_tile_ptr + 0 * stride_bs_s)
+        b_tile_2 = tl.load(Bs_tile_ptr + 1 * stride_bs_s)
+
+        if l_offset > 0:
+            # Perform the binary operation with the accumulated (A, b) from previous tiles
+            A_new_11 = A_tile_11 * A_acc_11 + A_tile_12 * A_acc_21
+            A_new_12 = A_tile_11 * A_acc_12 + A_tile_12 * A_acc_22
+            A_new_21 = A_tile_21 * A_acc_11 + A_tile_22 * A_acc_21
+            A_new_22 = A_tile_21 * A_acc_12 + A_tile_22 * A_acc_22
+            A_tile_11, A_tile_12, A_tile_21, A_tile_22 = A_new_11, A_new_12, A_new_21, A_new_22
+
+            b_new_1 = A_tile_11[:, None] * b_acc_1 + A_tile_12[:, None] * b_acc_2 + b_tile_1
+            b_new_2 = A_tile_21[:, None] * b_acc_1 + A_tile_22[:, None] * b_acc_2 + b_tile_2
+            b_tile_1, b_tile_2 = b_new_1, b_new_2
+        
+        A_acc_11, A_acc_12, A_acc_21, A_acc_22 = A_tile_11, A_tile_12, A_tile_21, A_tile_22
+        b_acc_1, b_acc_2 = b_tile_1, b_tile_2
+
+        # Write back the updated values to As and Bs
+        tl.store(As_tile_ptr + 0 * stride_as_s, A_acc_11)
+        tl.store(As_tile_ptr + 1 * stride_as_s, A_acc_12)
+        tl.store(As_tile_ptr + 2 * stride_as_s, A_acc_21)
+        tl.store(As_tile_ptr + 3 * stride_as_s, A_acc_22)
+
+        tl.store(Bs_tile_ptr + 0 * stride_bs_s, b_acc_1)
+        tl.store(Bs_tile_ptr + 1 * stride_bs_s, b_acc_2)
+
+
 # Parallel scan operations
 @jax.vmap
 def binary_operator(q_i, q_j):
