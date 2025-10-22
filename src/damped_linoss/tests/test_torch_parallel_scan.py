@@ -3,7 +3,7 @@ import torch
 import jax
 import jax.numpy as jnp
 from src.damped_linoss.models.LinOSS import binary_operator
-from src.damped_linoss.parallel_scan.torch_interface import parallel_scan_wrapper
+from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
 
 # Set random seeds for reproducibility
 torch.manual_seed(0)
@@ -27,7 +27,7 @@ def real_imag_to_complex(tensor):
 def test_parallel_scan_different_sizes(L, P):
     """Test parallel scan implementation with different dimensions."""
     M, F = generate_random_torch_tensors(L, P)
-    torch_output_M, torch_output_F = parallel_scan_wrapper(M, F)
+    torch_output_M, torch_output_F = ParallelScanFunction.apply(M, F)
 
     jax_M, jax_F = torch_to_jax(M), torch_to_jax(F)
     jax_output_M, jax_output_F = jax.lax.associative_scan(
