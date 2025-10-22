@@ -5,6 +5,7 @@ from .triton_parallel_scan import (
     parallel_scan,
     inter_block_scan,
     parallel_scan_epilogue,
+    parallel_scan_bwd,
 )
 
 
@@ -109,4 +110,58 @@ class ParallelScanFunction(torch.autograd.Function):
         TILE_L = ctx.TILE_L
         TILE_P = ctx.TILE_P
 
-        raise NotImplementedError("Backward pass is not implemented yet.")
+        L = F.shape[0]
+        P = F.shape[1] // 2
+        num_blocks_l = triton.cdiv(L, TILE_L)
+
+        # --- Prepare Tensors (Gradients, Inputs, Outputs) ---
+        gOM = gOM.contiguous().reshape(L, 4, P)
+        gOF = gOF.contiguous().reshape(L, 2, P, 2)
+        gOM_11, gOM_12, gOM_21, gOM_22 = gOM.unbind(1)
+        gOF_r1, gOF_i1, gOF_r2, gOF_i2 = gOF.unbind(1)[0].unbind(-1) + gOF.unbind(1)[1].unbind(-1)
+
+        M_b = M.broadcast_to((L, 4 * P)).reshape(L, 4, P)
+        F_b = F.reshape(L, 2, P, 2)
+        X_M_11, X_M_12, X_M_21, X_M_22 = M_b.unbind(1)
+        XF_1, XF_2 = F_b.unbind(1)
+        X_F_r1, X_F_i1 = XF_1.unbind(-1)
+        X_F_r2, X_F_i2 = XF_2.unbind(-1)
+        
+        Y_M_11, Y_M_12, Y_M_21, Y_M_22 = OM.unbind(1)
+        YF_1, YF_2 = OF.unbind(1)
+        Y_F_r1, Y_F_i1 = YF_1.unbind(-1)
+        Y_F_r2, Y_F_i2 = YF_2.unbind(-1)
+
+        # Allocate output tensors for final gradients (gX)
+        gM = torch.zeros_like(M_b)
+        gF = torch.zeros_like(F_b)
+        gM_11, gM_12, gM_21, gM_22 = gM.unbind(1)
+        gF_1, gF_2 = gF.unbind(1)
+        gF_r1, gF_i1 = gF_1.unbind(-1)
+        gF_r2, gF_i2 = gF_2.unbind(-1)
+        
+        # --- Backward Pass Execution ---
+        if num_blocks_l <= 1:
+            # If there's only one block, we run a single kernel that does everything.
+            grid = (1, triton.cdiv(P, TILE_P))
+            parallel_scan_bwd[grid](
+                X_M_11, X_M_12, X_M_21, X_M_22, X_F_r1, X_F_i1, X_F_r2, X_F_i2,
+                Y_M_11, Y_M_12, Y_M_21, Y_M_22, Y_F_r1, Y_F_i1, Y_F_r2, Y_F_i2,
+                gOM_11, gOM_12, gOM_21, gOM_22, gOF_r1, gOF_i1, gOF_r2, gOF_i2,
+                gM_11, gM_12, gM_21, gM_22, gF_r1, gF_i1, gF_r2, gF_i2,
+                L, P,
+                X_M_11.stride(0), X_M_11.stride(1), X_F_r1.stride(0), X_F_r1.stride(1),
+                Y_M_11.stride(0), Y_M_11.stride(1), Y_F_r1.stride(0), Y_F_r1.stride(1),
+                gOM_11.stride(0), gOM_11.stride(1), gOF_r1.stride(0), gOF_r1.stride(1),
+                gM_11.stride(0), gM_11.stride(1), gF_r1.stride(0), gF_r1.stride(1),
+                TILE_L, TILE_P
+            )
+        # else:
+        #     # --- Three-Pass Backward Scan for multiple blocks ---
+        #     # TODO
+
+        # --- Aggregate and Return Gradients ---
+        gM_agg = torch.sum(gM, dim=0).reshape(4 * P)
+        gF_final = gF.reshape(L, 2 * P, 2)
+
+        return gM_agg, gF_final, None, None
