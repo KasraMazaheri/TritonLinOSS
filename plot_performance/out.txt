@@ -1,0 +1,99 @@
+AX parallel scan with L=1, P=1 took 0.000087 seconds.
+.Parallel scan with L=16, P=1 took 0.000602 seconds.
+JAX parallel scan with L=16, P=1 took 0.000121 seconds.
+.Parallel scan with L=32, P=1 took 0.000251 seconds.
+JAX parallel scan with L=32, P=1 took 0.000113 seconds.
+.Parallel scan with L=64, P=1 took 0.000204 seconds.
+JAX parallel scan with L=64, P=1 took 0.000112 seconds.
+.Parallel scan with L=128, P=1 took 0.001334 seconds.
+JAX parallel scan with L=128, P=1 took 0.000124 seconds.
+.Parallel scan with L=256, P=1 took 0.000372 seconds.
+JAX parallel scan with L=256, P=1 took 0.000117 seconds.
+.Parallel scan with L=512, P=1 took 0.000636 seconds.
+JAX parallel scan with L=512, P=1 took 0.000130 seconds.
+.Parallel scan with L=4096, P=1 took 0.000466 seconds.
+JAX parallel scan with L=4096, P=1 took 0.000139 seconds.
+.Parallel scan with L=8192, P=1 took 0.000382 seconds.
+JAX parallel scan with L=8192, P=1 took 0.000147 seconds.
+.Parallel scan with L=16384, P=1 took 0.000394 seconds.
+JAX parallel scan with L=16384, P=1 took 0.000150 seconds.
+.Parallel scan with L=1, P=8 took 0.000498 seconds.
+JAX parallel scan with L=1, P=8 took 0.000076 seconds.
+.Parallel scan with L=16, P=8 took 0.000338 seconds.
+JAX parallel scan with L=16, P=8 took 0.000125 seconds.
+.Parallel scan with L=32, P=8 took 0.000177 seconds.
+JAX parallel scan with L=32, P=8 took 0.000115 seconds.
+.Parallel scan with L=64, P=8 took 0.000480 seconds.
+JAX parallel scan with L=64, P=8 took 0.000119 seconds.
+.Parallel scan with L=128, P=8 took 0.000608 seconds.
+JAX parallel scan with L=128, P=8 took 0.000127 seconds.
+.Parallel scan with L=256, P=8 took 0.001045 seconds.
+JAX parallel scan with L=256, P=8 took 0.000132 seconds.
+.Parallel scan with L=512, P=8 took 0.000392 seconds.
+JAX parallel scan with L=512, P=8 took 0.000135 seconds.
+.Parallel scan with L=4096, P=8 took 0.001444 seconds.
+JAX parallel scan with L=4096, P=8 took 0.000146 seconds.
+.Parallel scan with L=8192, P=8 took 0.003221 seconds.
+JAX parallel scan with L=8192, P=8 took 0.000338 seconds.
+.Parallel scan with L=16384, P=8 took 0.000400 seconds.
+JAX parallel scan with L=16384, P=8 took 0.000167 seconds.
+.Parallel scan with L=1, P=16 took 0.000295 seconds.
+JAX parallel scan with L=1, P=16 took 0.000080 seconds.
+.Parallel scan with L=16, P=16 took 0.000659 seconds.
+JAX parallel scan with L=16, P=16 took 0.000151 seconds.
+.Parallel scan with L=32, P=16 took 0.000326 seconds.
+JAX parallel scan with L=32, P=16 took 0.000129 seconds.
+.Parallel scan with L=64, P=16 took 0.000220 seconds.
+JAX parallel scan with L=64, P=16 took 0.000117 seconds.
+.Parallel scan with L=128, P=16 took 0.001216 seconds.
+JAX parallel scan with L=128, P=16 took 0.000127 seconds.
+.Parallel scan with L=256, P=16 took 0.000622 seconds.
+JAX parallel scan with L=256, P=16 took 0.000122 seconds.
+.Parallel scan with L=512, P=16 took 0.000445 seconds.
+JAX parallel scan with L=512, P=16 took 0.000126 seconds.
+.Parallel scan with L=4096, P=16 took 0.000596 seconds.
+JAX parallel scan with L=4096, P=16 took 0.000139 seconds.
+.Parallel scan with L=8192, P=16 took 0.000523 seconds.
+JAX parallel scan with L=8192, P=16 took 0.000149 seconds.
+.Parallel scan with L=16384, P=16 took 0.000491 seconds.
+JAX parallel scan with L=16384, P=16 took 0.000150 seconds.
+.Parallel scan with L=1, P=32 took 0.000257 seconds.
+JAX parallel scan with L=1, P=32 took 0.000087 seconds.
+.Parallel scan with L=16, P=32 took 0.000198 seconds.
+JAX parallel scan with L=16, P=32 took 0.000112 seconds.
+.Parallel scan with L=32, P=32 took 0.000304 seconds.
+JAX parallel scan with L=32, P=32 took 0.000120 seconds.
+.Parallel scan with L=64, P=32 took 0.000335 seconds.
+JAX parallel scan with L=64, P=32 took 0.000130 seconds.
+.Parallel scan with L=128, P=32 took 0.000794 seconds.
+JAX parallel scan with L=128, P=32 took 0.000137 seconds.
+.Parallel scan with L=256, P=32 took 0.000485 seconds.
+JAX parallel scan with L=256, P=32 took 0.000132 seconds.
+.Parallel scan with L=512, P=32 took 0.000639 seconds.
+JAX parallel scan with L=512, P=32 took 0.000136 seconds.
+.Parallel scan with L=4096, P=32 took 0.000442 seconds.
+JAX parallel scan with L=4096, P=32 took 0.000167 seconds.
+.Parallel scan with L=8192, P=32 took 0.000482 seconds.
+JAX parallel scan with L=8192, P=32 took 0.000190 seconds.
+.Parallel scan with L=16384, P=32 took 0.000592 seconds.
+JAX parallel scan with L=16384, P=32 took 0.000127 seconds.
+.Parallel scan with L=1, P=64 took 0.000178 seconds.
+JAX parallel scan with L=1, P=64 took 0.000087 seconds.
+.Parallel scan with L=16, P=64 took 0.000203 seconds.
+JAX parallel scan with L=16, P=64 took 0.000166 seconds.
+.Parallel scan with L=32, P=64 took 0.000185 seconds.
+JAX parallel scan with L=32, P=64 took 0.000124 seconds.
+.Parallel scan with L=64, P=64 took 0.000258 seconds.
+JAX parallel scan with L=64, P=64 took 0.000125 seconds.
+.Parallel scan with L=128, P=64 took 0.000350 seconds.
+JAX parallel scan with L=128, P=64 took 0.000124 seconds.
+.Parallel scan with L=256, P=64 took 0.000367 seconds.
+JAX parallel scan with L=256, P=64 took 0.000143 seconds.
+.Parallel scan with L=512, P=64 took 0.000659 seconds.
+JAX parallel scan with L=512, P=64 took 0.000150 seconds.
+.Parallel scan with L=4096, P=64 took 0.000490 seconds.
+JAX parallel scan with L=4096, P=64 took 0.000127 seconds.
+.Parallel scan with L=8192, P=64 took 0.000384 seconds.
+JAX parallel scan with L=8192, P=64 took 0.000171 seconds.
+.Parallel scan with L=16384, P=64 took 0.001039 seconds.
+JAX parallel scan with L=16384, P=64 took 0.000136 seconds.
