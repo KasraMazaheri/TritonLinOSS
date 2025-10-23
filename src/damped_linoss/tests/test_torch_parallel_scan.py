@@ -2,8 +2,10 @@ import pytest
 import torch
 import jax
 import jax.numpy as jnp
-from src.damped_linoss.models.LinOSS import binary_operator
+
+import time
 from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
+from src.damped_linoss.parallel_scan.jax_version import jax_scan
 
 # Set random seeds for reproducibility
 torch.manual_seed(0)
@@ -22,18 +24,25 @@ def real_imag_to_complex(tensor):
     """Convert real-imaginary tensor to complex array."""
     return tensor[..., 0] + 1j * tensor[..., 1]
 
-@pytest.mark.parametrize("L", [1, 16, 32, 64, 128, 256])
+@pytest.mark.parametrize("L", [1, 16, 32, 64, 128, 256, 512, 4096, 8192, 16384])
 @pytest.mark.parametrize("P", [1, 8, 16, 32, 64])
 def test_parallel_scan_different_sizes(L, P):
     """Test parallel scan implementation with different dimensions."""
     M, F = generate_random_torch_tensors(L, P)
     torch_output_M, torch_output_F = ParallelScanFunction.apply(M, F)
+    start_time = time.perf_counter()
+    torch_output_M, torch_output_F = ParallelScanFunction.apply(M, F)
+    end_time = time.perf_counter()
+    print(f"Parallel scan with L={L}, P={P} took {end_time - start_time:.6f} seconds.")
 
     jax_M, jax_F = torch_to_jax(M), torch_to_jax(F)
-    jax_output_M, jax_output_F = jax.lax.associative_scan(
-        binary_operator, 
-        (jax_M * jnp.ones((L, 4 * P)), real_imag_to_complex(jax_F))
-    )
+    jax_F_complex = real_imag_to_complex(jax_F)
+    jax_M = jax_M * jnp.ones((L, 4 * P))
+    jax_output_M, jax_output_F = jax_scan(jax_M, jax_F_complex)
+    start_time = time.perf_counter()
+    jax_output_M, jax_output_F = jax_scan(jax_M, jax_F_complex)
+    end_time = time.perf_counter()
+    print(f"JAX parallel scan with L={L}, P={P} took {end_time - start_time:.6f} seconds.")
 
     assert jnp.allclose(jax_output_M, torch_to_jax(torch_output_M), atol=1e-5)
     assert jnp.allclose(jax_output_F, real_imag_to_complex(torch_to_jax(torch_output_F)), atol=1e-5)
