@@ -10,7 +10,7 @@ from .triton_parallel_scan import (
 
 class ParallelScanFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, M, F, TILE_L=64, TILE_P=32):
+    def forward(ctx, M, F, TILE_L=64):
         """
         The forward pass is identical to your original wrapper function.
         We save the inputs and outputs for the backward pass.
@@ -19,38 +19,33 @@ class ParallelScanFunction(torch.autograd.Function):
         P = F.shape[1] // 2
         assert M.shape == (4 * P,)
         assert F.shape == (L, 2 * P, 2)
-        M_b = M.broadcast_to((L, 4 * P)).reshape(L, 4, P)
-        F_b = F.reshape(L, 2, P, 2)
 
-        M_11, M_12, M_21, M_22 = M_b.unbind(1)
-        F1, F2 = F_b.unbind(1)
-        F_r1, F_i1 = F1.unbind(-1)
-        F_r2, F_i2 = F2.unbind(-1)
+        # Restructure as 2x2 matrices
+        M = M.reshape(2, 2, P).permute(2, 0, 1)
+        F = F.reshape(L, 2, P, 2).permute(0, 2, 1, 3)
+
+        M = M.broadcast_to((L, P, 2, 2))
 
         # Allocate output tensors
-        OM = torch.zeros_like(M_b)
-        OF = torch.zeros_like(F_b)
-        
-        OM_11, OM_12, OM_21, OM_22 = OM.unbind(1)
-        OF_1, OF_2 = OF.unbind(1)
-        OF_r1, OF_i1 = OF_1.unbind(-1)
-        OF_r2, OF_i2 = OF_2.unbind(-1)
+        OM = torch.zeros_like(M)
+        OF = torch.zeros_like(F)
 
         # First parallel scan
-        grid = (triton.cdiv(L, TILE_L), triton.cdiv(P, TILE_P))
+        grid = (triton.cdiv(L, TILE_L), P)
         parallel_scan[grid](
             # --- Input Pointers ---
-            M_11, M_12, M_21, M_22, F_r1, F_i1, F_r2, F_i2,
+            M, F,
             # --- Output Pointers ---
-            OM_11, OM_12, OM_21, OM_22, OF_r1, OF_i1, OF_r2, OF_i2,
+            OM, OF,
             # --- Dimensions ---
-            L, P,
+            L,
             # --- Strides ---
-            M_11.stride(0), M_11.stride(1), F_r1.stride(0), F_r1.stride(1),
-            OM_11.stride(0), OM_11.stride(1), OF_r1.stride(0), OF_r1.stride(1),
+            M.stride(0), M.stride(1), M.stride(2), M.stride(3),
+            F.stride(0), F.stride(1), F.stride(2), F.stride(3),
+            OM.stride(0), OM.stride(1), OM.stride(2), OM.stride(3),
+            OF.stride(0), OF.stride(1), OF.stride(2), OF.stride(3),
             # --- Compile-time Constants ---
             TILE_L=TILE_L,
-            TILE_P=TILE_P,
         )
 
         num_blocks_l = triton.cdiv(L, TILE_L)
@@ -58,45 +53,43 @@ class ParallelScanFunction(torch.autograd.Function):
             BM = OM[TILE_L - 1::TILE_L].clone()
             BF = OF[TILE_L - 1::TILE_L].clone()
 
-            BM_11, BM_12, BM_21, BM_22 = BM.unbind(1)
-            BF_1, BF_2 = BF.unbind(1)
-            BF_r1, BF_i1 = BF_1.unbind(-1)
-            BF_r2, BF_i2 = BF_2.unbind(-1)
-
             # Compute partial sums
             grid_inter = (P,)
             inter_block_scan[grid_inter](
                 # --- Input & Output Pointers for the Scan of the Entire Block ---
-                BM_11, BM_12, BM_21, BM_22, BF_r1, BF_i1, BF_r2, BF_i2,
+                BM, BF,
                 # --- Dimensions ---
-                BM_11.shape[0],
+                BM.shape[0],
                 # --- Strides ---
-                BM_11.stride(0), BM_11.stride(1), BF_r1.stride(0), BF_r1.stride(1),
+                BM.stride(0), BM.stride(1), BM.stride(2), BM.stride(3),
+                BF.stride(0), BF.stride(1), BF.stride(2), BF.stride(3),
             )
 
             # Parallel scan epilogue to add partial sums to each block
             # Note that the first block does not need to be updated with the partial sums
-            grid_epilogue = (num_blocks_l - 1, triton.cdiv(P, TILE_P))
+            grid_epilogue = (num_blocks_l - 1, P)
             parallel_scan_epilogue[grid_epilogue](
                 # --- Input and Output Pointers for the Cumalative Scan ---
-                OM_11[TILE_L:], OM_12[TILE_L:], OM_21[TILE_L:], OM_22[TILE_L:],
-                OF_r1[TILE_L:], OF_i1[TILE_L:], OF_r2[TILE_L:], OF_i2[TILE_L:],
+                OM[TILE_L:], OF[TILE_L:],
                 # --- Output Pointers for the Scan of the Entire Block ---
-                BM_11, BM_12, BM_21, BM_22, BF_r1, BF_i1, BF_r2, BF_i2,
+                BM, BF,
                 # --- Dimensions ---
-                L - TILE_L, P,
+                L - TILE_L,
                 # --- Strides ---
-                OM_11.stride(0), OM_11.stride(1), OF_r1.stride(0), OF_r1.stride(1),
-                BM_11.stride(0), BM_11.stride(1), BF_r1.stride(0), BF_r1.stride(1),
+                OM.stride(0), OM.stride(1), OM.stride(2), OM.stride(3),
+                OF.stride(0), OF.stride(1), OF.stride(2), OF.stride(3),
+                BM.stride(0), BM.stride(1), BM.stride(2), BM.stride(3),
+                BF.stride(0), BF.stride(1), BF.stride(2), BF.stride(3),
                 # --- Compile-time Constants ---
                 TILE_L=TILE_L,
-                TILE_P=TILE_P,
             )
         
         # Save tensors and constants for backward pass
         ctx.save_for_backward(M, F, OM, OF)
         ctx.TILE_L = TILE_L
-        ctx.TILE_P = TILE_P
+
+        OM = OM.permute(0, 2, 3, 1)
+        OF = OF.permute(0, 2, 1, 3)
 
         return OM.reshape(L, 4 * P), OF.reshape(L, 2 * P, 2)
 
@@ -107,6 +100,5 @@ class ParallelScanFunction(torch.autograd.Function):
         """
         M, F, OM, OF = ctx.saved_tensors
         TILE_L = ctx.TILE_L
-        TILE_P = ctx.TILE_P
 
         raise NotImplementedError("Backward pass is not implemented yet.")
