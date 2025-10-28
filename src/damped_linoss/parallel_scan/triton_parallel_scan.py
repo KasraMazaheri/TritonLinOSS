@@ -2,6 +2,40 @@ import triton
 import triton.language as tl
 
 
+# ===============================================
+# Utility Functions for LinOSS Parallel Scan
+# ===============================================
+
+@triton.jit
+def get_offsets(l_offsets, stride_l, stride_p):
+    bidp = tl.program_id(0)
+    return l_offsets * stride_l + bidp * stride_p
+
+@triton.jit
+def load_2x2(ptr, offsets, strides, mask=None, others=None):
+    bidp = tl.program_id(0)
+    ptr = ptr + offsets * strides[0] + bidp * strides[1]
+    others = (None,) * 4 if mask is None else ((0.0,) * 4 if others is None else others)
+    return (
+        tl.load(ptr, mask=mask, other=others[0]),
+        tl.load(ptr + strides[3], mask=mask, other=others[1]),
+        tl.load(ptr + strides[2], mask=mask, other=others[2]),
+        tl.load(ptr + strides[2] + strides[3], mask=mask, other=others[3]),
+    )
+
+@triton.jit
+def store_2x2(ptr, offsets, strides, Vs, mask=None):
+    bidp = tl.program_id(0)
+    ptr = ptr + offsets * strides[0] + bidp * strides[1]
+    tl.store(ptr, Vs[0], mask=mask)
+    tl.store(ptr + strides[3], Vs[1], mask=mask)
+    tl.store(ptr + strides[2], Vs[2], mask=mask)
+    tl.store(ptr + strides[2] + strides[3], Vs[3], mask=mask)
+
+# ===============================================
+# Forward Pass for LinOSS Parallel Scan
+# ===============================================
+
 @triton.jit
 def associative_operator_fwd(
     i_M_11, i_M_12, i_M_21, i_M_22,
@@ -23,140 +57,68 @@ def associative_operator_fwd(
     return (M_11, M_12, M_21, M_22, F_11, F_12, F_21, F_22)
 
 @triton.jit
-def load_bulk(ptr, offsets, d1_stride, d2_stride, mask=None):
-    other = None if mask is None else 0.0
-    val1 = tl.load(ptr + offsets, mask=mask, other=other)
-    val2 = tl.load(ptr + offsets + d2_stride, mask=mask, other=other)
-    val3 = tl.load(ptr + offsets + d1_stride, mask=mask, other=other)
-    val4 = tl.load(ptr + offsets + d1_stride + d2_stride, mask=mask, other=other)
-    return val1, val2, val3, val4
-
-@triton.jit
-def load_bulk_bwd(ptr, offsets, d1_stride, d2_stride, mask, others):
-    other1, other2, other3, other4 = others
-    val1 = tl.load(ptr + offsets, mask=mask, other=other1)
-    val2 = tl.load(ptr + offsets + d2_stride, mask=mask, other=other2)
-    val3 = tl.load(ptr + offsets + d1_stride, mask=mask, other=other3)
-    val4 = tl.load(ptr + offsets + d1_stride + d2_stride, mask=mask, other=other4)
-    return val1, val2, val3, val4
-
-@triton.jit
-def store_bulk(ptr, offsets, d1_stride, d2_stride, Vs, mask=None):
-    tl.store(ptr + offsets, Vs[0], mask=mask)
-    tl.store(ptr + offsets + d2_stride, Vs[1], mask=mask)
-    tl.store(ptr + offsets + d1_stride, Vs[2], mask=mask)
-    tl.store(ptr + offsets + d1_stride + d2_stride, Vs[3], mask=mask)
-
-@triton.jit
 def parallel_scan_fwd(
-    # --- Input Pointers ---
     M_ptr, F_ptr,
-    # --- Output Pointers for the Cumalative Scan ---
     OM_ptr, OF_ptr,
-    # --- Dimensions ---
     L,
-    # --- Strides ---
-    M_stride_l, M_stride_p, M_stride_d1, M_stride_d2,
-    F_stride_l, F_stride_p, F_stride_d1, F_stride_d2,
-    OM_stride_l, OM_stride_p, OM_stride_d1, OM_stride_d2,
-    OF_stride_l, OF_stride_p, OF_stride_d1, OF_stride_d2,
-    # --- Compile-time Constants ---
+    M_strides, F_strides, OM_strides, OF_strides,
     TILE_L: tl.constexpr,
 ):
-    bidl = tl.program_id(0)
-    bidp = tl.program_id(1)
+    bidl = tl.program_id(1)
+    offsets = bidl * TILE_L + tl.arange(0, TILE_L)
+    mask = offsets < L
+    
+    Ms = load_2x2(M_ptr, offsets, M_strides, mask)
+    Fs = load_2x2(F_ptr, offsets, F_strides, mask)
+    
+    Vs = tl.associative_scan(Ms + Fs, axis=0, combine_fn=associative_operator_fwd)
 
-    l_offsets = bidl * TILE_L + tl.arange(0, TILE_L)
-    l_mask = l_offsets < L
-
-    M_offsets = l_offsets * M_stride_l + bidp * M_stride_p
-    F_offsets = l_offsets * F_stride_l + bidp * F_stride_p
-    mask      = l_mask
-
-    Ms = load_bulk(M_ptr, M_offsets, M_stride_d1, M_stride_d2, mask)
-    Fs = load_bulk(F_ptr, F_offsets, F_stride_d1, F_stride_d2, mask)
-
-    Vs = tl.associative_scan(
-        Ms + Fs, axis=0, combine_fn=associative_operator_fwd
-    )
-    OMs, OFs = Vs[:4], Vs[4:]
-
-    OM_offsets = l_offsets * OM_stride_l + bidp * OM_stride_p
-    OF_offsets = l_offsets * OF_stride_l + bidp * OF_stride_p
-
-    store_bulk(OM_ptr, OM_offsets, OM_stride_d1, OM_stride_d2, OMs, mask=mask)
-    store_bulk(OF_ptr, OF_offsets, OF_stride_d1, OF_stride_d2, OFs, mask=mask)
+    store_2x2(OM_ptr, offsets, OM_strides, Vs[:4], mask) 
+    store_2x2(OF_ptr, offsets, OF_strides, Vs[4:], mask)
     
 @triton.jit
 def inter_block_scan_fwd(
-    # --- Input & Output Pointers for the Scan of the Entire Block ---
     BM_ptr, BF_ptr,
-    # --- Dimensions ---
     L, # Different from the main L, this is number of blocks
-    # --- Strides ---
-    BM_stride_l, BM_stride_p, BM_stride_d1, BM_stride_d2,
-    BF_stride_l, BF_stride_p, BF_stride_d1, BF_stride_d2,
+    BM_strides, BF_strides,
 ):
-    bidp = tl.program_id(0)
-
-    CMs = load_bulk(BM_ptr, bidp * BM_stride_p, BM_stride_d1, BM_stride_d2)
-    CFs = load_bulk(BF_ptr, bidp * BF_stride_p, BF_stride_d1, BF_stride_d2)
-    for l_offset in range(1, L):
-        BM_offsets = l_offset * BM_stride_l + bidp * BM_stride_p
-        BF_offsets = l_offset * BF_stride_l + bidp * BF_stride_p
-
-        Ms = load_bulk(BM_ptr, BM_offsets, BM_stride_d1, BM_stride_d2)
-        Fs = load_bulk(BF_ptr, BF_offsets, BF_stride_d1, BF_stride_d2)
+    CMs = load_2x2(BM_ptr, 0, BM_strides)
+    CFs = load_2x2(BF_ptr, 0, BF_strides)
+    for offset in range(1, L):
+        Ms = load_2x2(BM_ptr, offset, BM_strides)
+        Fs = load_2x2(BF_ptr, offset, BF_strides)
+        
         Vs = associative_operator_fwd(*CMs, *CFs, *Ms, *Fs)
         CMs, CFs = Vs[:4], Vs[4:]
 
-        store_bulk(BM_ptr, BM_offsets, BM_stride_d1, BM_stride_d2, CMs)
-        store_bulk(BF_ptr, BF_offsets, BF_stride_d1, BF_stride_d2, CFs)
+        store_2x2(BM_ptr, offset, BM_strides, CMs)
+        store_2x2(BF_ptr, offset, BF_strides, CFs)
 
 @triton.jit
 def parallel_scan_epilogue_fwd(
-    # --- Input and Output Pointers for the Cumalative Scan ---
     OM_ptr, OF_ptr,
-    # --- Output Pointers for the Scan of the Entire Block ---
     BM_ptr, BF_ptr,
-    # --- Dimensions ---
     L,
-    # --- Strides ---
-    OM_stride_l, OM_stride_p, OM_stride_d1, OM_stride_d2,
-    OF_stride_l, OF_stride_p, OF_stride_d1, OF_stride_d2,
-    BM_stride_l, BM_stride_p, BM_stride_d1, BM_stride_d2,
-    BF_stride_l, BF_stride_p, BF_stride_d1, BF_stride_d2,
-    # --- Compile-time Constants ---
+    OM_strides, OF_strides, BM_strides, BF_strides,
     TILE_L: tl.constexpr,
 ):
-    bidl = tl.program_id(0)
-    bidp = tl.program_id(1)
-
-    l_offsets = bidl * TILE_L + tl.arange(0, TILE_L)
-    l_mask = l_offsets < L
-
-    OM_offsets = l_offsets * OM_stride_l + bidp * OM_stride_p
-    OF_offsets = l_offsets * OF_stride_l + bidp * OF_stride_p
-    mask       = l_mask
-
-    OMs = load_bulk(OM_ptr, OM_offsets, OM_stride_d1, OM_stride_d2, mask=mask)
-    OFs = load_bulk(OF_ptr, OF_offsets, OF_stride_d1, OF_stride_d2, mask=mask)
-
-    BM_offsets = bidl * BM_stride_l + bidp * BM_stride_p
-    BF_offsets = bidl * BF_stride_l + bidp * BF_stride_p
-
-    BMs = load_bulk(BM_ptr, BM_offsets, BM_stride_d1, BM_stride_d2)
-    BFs = load_bulk(BF_ptr, BF_offsets, BF_stride_d1, BF_stride_d2)
+    bidl = tl.program_id(1)
+    offsets = bidl * TILE_L + tl.arange(0, TILE_L)
+    mask = offsets < L
+    
+    OMs = load_2x2(OM_ptr, offsets, OM_strides, mask=mask)
+    OFs = load_2x2(OF_ptr, offsets, OF_strides, mask=mask)
+    BMs = load_2x2(BM_ptr, bidl, BM_strides)
+    BFs = load_2x2(BF_ptr, bidl, BF_strides)
 
     Vs = associative_operator_fwd(*BMs, *BFs, *OMs, *OFs)
-    OMs, OFs = Vs[:4], Vs[4:]
 
-    store_bulk(OM_ptr, OM_offsets, OM_stride_d1, OM_stride_d2, OMs, mask=mask)
-    store_bulk(OF_ptr, OF_offsets, OF_stride_d1, OF_stride_d2, OFs, mask=mask)
+    store_2x2(OM_ptr, offsets, OM_strides, Vs[:4], mask=mask)
+    store_2x2(OF_ptr, offsets, OF_strides, Vs[4:], mask=mask)
 
-# ================================================================================
-# Backward Pass for Parallel Scan
-# ================================================================================
+# ===============================================
+# Backward Pass for LinOSS Parallel Scan
+# ===============================================
 
 @triton.jit
 def associative_operator_bwd(
@@ -208,143 +170,83 @@ def vjb(
 
 @triton.jit
 def parallel_scan_bwd(
-    # --- Input Pointers ---
-    M_ptr,
-    gOM_ptr, gOF_ptr,
-    # --- Output Pointers for the Cumalative Scan ---
+    M_ptr, gOM_ptr, gOF_ptr,
     RM_ptr, gM_ptr, gF_ptr,
-    # --- Dimensions ---
     L,
-    # --- Strides ---
-    M_stride_l, M_stride_p, M_stride_d1, M_stride_d2,
-    gOM_stride_l, gOM_stride_p, gOM_stride_d1, gOM_stride_d2,
-    gOF_stride_l, gOF_stride_p, gOF_stride_d1, gOF_stride_d2,
-    RM_stride_l, RM_stride_p, RM_stride_d1, RM_stride_d2,
-    gM_stride_l, gM_stride_p, gM_stride_d1, gM_stride_d2,
-    gF_stride_l, gF_stride_p, gF_stride_d1, gF_stride_d2,
-    # --- Compile-time Constants ---
+    M_strides, gOM_strides, gOF_strides, RM_strides, gM_strides, gF_strides,
     TILE_L: tl.constexpr,
 ):
-    bidl = tl.program_id(0)
-    bidp = tl.program_id(1)
+    bidl = tl.program_id(1)
+    offsets = bidl * TILE_L + tl.arange(0, TILE_L)
+    mask = offsets < L
 
-    l_offsets = bidl * TILE_L + tl.arange(0, TILE_L)
-    l_mask = l_offsets < L
+    Ms   = load_2x2(M_ptr,   offsets, M_strides,   mask=mask, others=(1, 0, 0, 1))
+    gOMs = load_2x2(gOM_ptr, offsets, gOM_strides, mask=mask)
+    gOFs = load_2x2(gOF_ptr, offsets, gOF_strides, mask=mask)
 
-    M_offsets   = l_offsets * M_stride_l   + bidp * M_stride_p
-    gOM_offsets = l_offsets * gOM_stride_l + bidp * gOM_stride_p
-    gOF_offsets = l_offsets * gOF_stride_l + bidp * gOF_stride_p
-    RM_offsets  = l_offsets * RM_stride_l  + bidp * RM_stride_p
-    gM_offsets  = l_offsets * gM_stride_l  + bidp * gM_stride_p
-    gF_offsets  = l_offsets * gF_stride_l  + bidp * gF_stride_p
+    Vs = tl.associative_scan(Ms + gOMs + gOFs, axis=0, combine_fn=associative_operator_bwd, reverse=True)
 
-    Ms   = load_bulk_bwd(M_ptr, M_offsets, M_stride_d1, M_stride_d2, mask=l_mask, others=(1, 0, 0, 1))
-    gOMs = load_bulk(gOM_ptr, gOM_offsets, gOM_stride_d1, gOM_stride_d2, mask=l_mask)
-    gOFs = load_bulk(gOF_ptr, gOF_offsets, gOF_stride_d1, gOF_stride_d2, mask=l_mask)
-
-    Vs = tl.associative_scan(
-        Ms + gOMs + gOFs, axis=0, combine_fn=associative_operator_bwd, reverse=True
-    )
-    RMs, gMs, gFs = Vs[:4], Vs[4:8], Vs[8:12]
-
-    store_bulk(RM_ptr, RM_offsets, RM_stride_d1, RM_stride_d2, RMs, mask=l_mask)
-    store_bulk(gM_ptr, gM_offsets, gM_stride_d1, gM_stride_d2, gMs, mask=l_mask)
-    store_bulk(gF_ptr, gF_offsets, gF_stride_d1, gF_stride_d2, gFs, mask=l_mask)
+    store_2x2(RM_ptr, offsets, RM_strides, Vs[:4],  mask=mask)
+    store_2x2(gM_ptr, offsets, gM_strides, Vs[4:8], mask=mask)
+    store_2x2(gF_ptr, offsets, gF_strides, Vs[8:],  mask=mask)
 
 @triton.jit
 def inter_block_scan_bwd(
-    # --- Input & Output Pointers for the Scan of the Entire Block ---
     BM_ptr, gBM_ptr, gBF_ptr,
-    # --- Dimensions ---
     L, # Different from the main L, this is number of blocks
-    # --- Strides ---
-    BM_stride_l, BM_stride_p, BM_stride_d1, BM_stride_d2,
-    gBM_stride_l, gBM_stride_p, gBM_stride_d1, gBM_stride_d2,
-    gBF_stride_l, gBF_stride_p, gBF_stride_d1, gBF_stride_d2,
+    BM_strides, gBM_strides, gBF_strides,
 ):
-    bidp = tl.program_id(0)
+    CMs  = load_2x2(BM_ptr, L - 1, BM_strides)
+    gCMs = load_2x2(gBM_ptr, L - 1, gBM_strides)
+    gCFs = load_2x2(gBF_ptr, L - 1, gBF_strides)
 
-    BM_offset  = (L - 1) * BM_stride_l  + bidp * BM_stride_p
-    gBM_offset = (L - 1) * gBM_stride_l + bidp * gBM_stride_p
-    gBF_offset = (L - 1) * gBF_stride_l + bidp * gBF_stride_p
+    for offset in range(L - 2, -1, -1):
+        BMs  = load_2x2(BM_ptr, offset, BM_strides)
+        gBMs = load_2x2(gBM_ptr, offset, gBM_strides)
+        gBFs = load_2x2(gBF_ptr, offset, gBF_strides)
 
-    CMs  = load_bulk(BM_ptr, BM_offset, BM_stride_d1, BM_stride_d2)
-    gCMs = load_bulk(gBM_ptr, gBM_offset, gBM_stride_d1, gBM_stride_d2)
-    gCFs = load_bulk(gBF_ptr, gBF_offset, gBF_stride_d1, gBF_stride_d2)
-    for _ in range(L - 2, -1, -1):
-        BM_offset  -= BM_stride_l
-        gBM_offset -= gBM_stride_l
-        gBF_offset -= gBF_stride_l
-
-        BMs  = load_bulk(BM_ptr, BM_offset, BM_stride_d1, BM_stride_d2)
-        gBMs = load_bulk(gBM_ptr, gBM_offset, gBM_stride_d1, gBM_stride_d2)
-        gBFs = load_bulk(gBF_ptr, gBF_offset, gBF_stride_d1, gBF_stride_d2)
         Vs = associative_operator_bwd(*BMs, *gBMs, *gBFs, *CMs, *gCMs, *gCFs)
-        CMs, gCMs, gCFs = Vs[:4], Vs[4:8], Vs[8:12]
+        CMs, gCMs, gCFs = Vs[:4], Vs[4:8], Vs[8:]
 
-        store_bulk(BM_ptr, BM_offset, BM_stride_d1, BM_stride_d2, CMs)
-        store_bulk(gBM_ptr, gBM_offset, gBM_stride_d1, gBM_stride_d2, gCMs)
-        store_bulk(gBF_ptr, gBF_offset, gBF_stride_d1, gBF_stride_d2, gCFs)
+        store_2x2(BM_ptr, offset, BM_strides, CMs)
+        store_2x2(gBM_ptr, offset, gBM_strides, gCMs)
+        store_2x2(gBF_ptr, offset, gBF_strides, gCFs)
 
 @triton.jit
 def parallel_scan_epilogue_bwd(
-    # --- Input and Output Pointers for the Cumalative Scan ---
     OM_ptr, OF_ptr,
     BM_ptr, gBM_ptr, gBF_ptr,
     RM_ptr, gM_ptr, gF_ptr,
-    # --- Dimensions ---
     L,
-    # --- Strides ---
-    OM_stride_l, OM_stride_p, OM_stride_d1, OM_stride_d2,
-    OF_stride_l, OF_stride_p, OF_stride_d1, OF_stride_d2,
-    
-    BM_stride_l, BM_stride_p, BM_stride_d1, BM_stride_d2,
-    gBM_stride_l, gBM_stride_p, gBM_stride_d1, gBM_stride_d2,
-    gBF_stride_l, gBF_stride_p, gBF_stride_d1, gBF_stride_d2,
-    
-    RM_stride_l, RM_stride_p, RM_stride_d1, RM_stride_d2,
-    gM_stride_l, gM_stride_p, gM_stride_d1, gM_stride_d2,
-    gF_stride_l, gF_stride_p, gF_stride_d1, gF_stride_d2,
-    # --- Compile-time Constants ---
+    OM_strides, OF_strides, 
+    BM_strides, gBM_strides, gBF_strides, 
+    RM_strides, gM_strides, gF_strides,
     TILE_L: tl.constexpr,
 ):
-    bidl = tl.program_id(0)
-    bidp = tl.program_id(1)
+    bidl = tl.program_id(1)
+    numl = tl.num_programs(1)
+    offsets = bidl * TILE_L + tl.arange(0, TILE_L)
+    l_mask = offsets < L
+    b_mask = bidl + 1 < numl
 
-    l_offsets = bidl * TILE_L + tl.arange(0, TILE_L)
-    l_mask = l_offsets < L
-
-    RM_offsets = l_offsets * RM_stride_l + bidp * RM_stride_p
-    gM_offsets = l_offsets * gM_stride_l + bidp * gM_stride_p
-    gF_offsets = l_offsets * gF_stride_l + bidp * gF_stride_p
-    mask       = l_mask
-
-    RMs = load_bulk(RM_ptr, RM_offsets, RM_stride_d1, RM_stride_d2, mask=mask)
-    gMs = load_bulk(gM_ptr, gM_offsets, gM_stride_d1, gM_stride_d2, mask=mask)
-    gFs = load_bulk(gF_ptr, gF_offsets, gF_stride_d1, gF_stride_d2, mask=mask)
-
-    BM_offset  = (bidl + 1) * BM_stride_l + bidp * BM_stride_p
-    gBM_offset = (bidl + 1) * gBM_stride_l + bidp * gBM_stride_p
-    gBF_offset = (bidl + 1) * gBF_stride_l + bidp * gBF_stride_p
-    b_mask     = (bidl + 1) < tl.num_programs(0)
-
-    BMs  = load_bulk(BM_ptr, BM_offset, BM_stride_d1, BM_stride_d2, b_mask)
-    gBMs = load_bulk(gBM_ptr, gBM_offset, gBM_stride_d1, gBM_stride_d2, b_mask)
-    gBFs = load_bulk(gBF_ptr, gBF_offset, gBF_stride_d1, gBF_stride_d2, b_mask)
+    RMs = load_2x2(RM_ptr, offsets, RM_strides, mask=l_mask)
+    gMs = load_2x2(gM_ptr, offsets, gM_strides, mask=l_mask)
+    gFs = load_2x2(gF_ptr, offsets, gF_strides, mask=l_mask)
+    BMs  = load_2x2(BM_ptr,  bidl + 1, BM_strides,  mask=b_mask)
+    gBMs = load_2x2(gBM_ptr, bidl + 1, gBM_strides, mask=b_mask)
+    gBFs = load_2x2(gBF_ptr, bidl + 1, gBF_strides, mask=b_mask)
 
     Vs = associative_operator_bwd(*RMs, *gMs, *gFs, *BMs, *gBMs, *gBFs)
     gOMs, gOFs = Vs[4:8], Vs[8:12]
 
-    l_offsets_prev = l_offsets - 1
-    l_mask_prev = l_offsets_prev >= 0
+    prev_offsets = offsets - 1
+    l_prev_mask = prev_offsets >= 0
 
-    OM_prev_offsets = l_offsets_prev * OM_stride_l + bidp * OM_stride_p
-    OF_prev_offsets = l_offsets_prev * OF_stride_l + bidp * OF_stride_p
-    OMs_prev = load_bulk_bwd(OM_ptr, OM_prev_offsets, OM_stride_d1, OM_stride_d2, mask=l_mask_prev, others=(1, 0, 0, 1))
-    OFs_prev = load_bulk(OF_ptr, OF_prev_offsets, OF_stride_d1, OF_stride_d2, mask=l_mask_prev)
+    OMs_prev = load_2x2(OM_ptr, prev_offsets, OM_strides, mask=l_prev_mask, others=(1, 0, 0, 1))
+    OFs_prev = load_2x2(OF_ptr, prev_offsets, OF_strides, mask=l_prev_mask)
 
     gFs = gOFs
     gMs = vjb(*gOMs, *gOFs, *OMs_prev, *OFs_prev)
 
-    store_bulk(gM_ptr, gM_offsets, gM_stride_d1, gM_stride_d2, gMs, mask=l_mask)
-    store_bulk(gF_ptr, gF_offsets, gF_stride_d1, gF_stride_d2, gFs, mask=l_mask)
+    store_2x2(gM_ptr, offsets, gM_strides, gMs, mask=l_mask)
+    store_2x2(gF_ptr, offsets, gF_strides, gFs, mask=l_mask)

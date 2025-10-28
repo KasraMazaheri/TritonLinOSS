@@ -34,20 +34,12 @@ class ParallelScanFunction(torch.autograd.Function):
         OF = torch.zeros_like(F)
 
         # First parallel scan
-        grid = (triton.cdiv(L, TILE_L), P)
+        grid = (P, triton.cdiv(L, TILE_L))
         parallel_scan_fwd[grid](
-            # --- Input Pointers ---
             M, F,
-            # --- Output Pointers ---
             OM, OF,
-            # --- Dimensions ---
             L,
-            # --- Strides ---
-            M.stride(0), M.stride(1), M.stride(2), M.stride(3),
-            F.stride(0), F.stride(1), F.stride(2), F.stride(3),
-            OM.stride(0), OM.stride(1), OM.stride(2), OM.stride(3),
-            OF.stride(0), OF.stride(1), OF.stride(2), OF.stride(3),
-            # --- Compile-time Constants ---
+            M.stride(), F.stride(), OM.stride(), OF.stride(),
             TILE_L=TILE_L,
         )
 
@@ -59,31 +51,19 @@ class ParallelScanFunction(torch.autograd.Function):
             # Compute partial sums
             grid_inter = (P,)
             inter_block_scan_fwd[grid_inter](
-                # --- Input & Output Pointers for the Scan of the Entire Block ---
                 BM, BF,
-                # --- Dimensions ---
                 BM.shape[0],
-                # --- Strides ---
-                BM.stride(0), BM.stride(1), BM.stride(2), BM.stride(3),
-                BF.stride(0), BF.stride(1), BF.stride(2), BF.stride(3),
+                BM.stride(), BF.stride(),
             )
 
             # Parallel scan epilogue to add partial sums to each block
             # Note that the first block does not need to be updated with the partial sums
-            grid_epilogue = (num_blocks_l - 1, P)
+            grid_epilogue = (P, num_blocks_l - 1)
             parallel_scan_epilogue_fwd[grid_epilogue](
-                # --- Input and Output Pointers for the Cumalative Scan ---
                 OM[TILE_L:], OF[TILE_L:],
-                # --- Output Pointers for the Scan of the Entire Block ---
                 BM, BF,
-                # --- Dimensions ---
                 L - TILE_L,
-                # --- Strides ---
-                OM.stride(0), OM.stride(1), OM.stride(2), OM.stride(3),
-                OF.stride(0), OF.stride(1), OF.stride(2), OF.stride(3),
-                BM.stride(0), BM.stride(1), BM.stride(2), BM.stride(3),
-                BF.stride(0), BF.stride(1), BF.stride(2), BF.stride(3),
-                # --- Compile-time Constants ---
+                OM.stride(), OF.stride(), BM.stride(), BF.stride(),
                 TILE_L=TILE_L,
             )
         
@@ -120,22 +100,12 @@ class ParallelScanFunction(torch.autograd.Function):
         gF = torch.zeros_like(F)
 
         # First parallel scan
-        grid = (triton.cdiv(L, TILE_L), P)
+        grid = (P, triton.cdiv(L, TILE_L))
         parallel_scan_bwd[grid](
-            # --- Input Pointers ---
             M, gOM, gOF,
-            # --- Output Pointers ---
             RM, gM, gF,
-            # --- Dimensions ---
             L,
-            # --- Strides ---
-            M.stride(0), M.stride(1), M.stride(2), M.stride(3),
-            gOM.stride(0), gOM.stride(1), gOM.stride(2), gOM.stride(3),
-            gOF.stride(0), gOF.stride(1), gOF.stride(2), gOF.stride(3),
-            RM.stride(0), RM.stride(1), RM.stride(2), RM.stride(3),
-            gM.stride(0), gM.stride(1), gM.stride(2), gM.stride(3),
-            gF.stride(0), gF.stride(1), gF.stride(2), gF.stride(3),
-            # --- Compile-time Constants ---
+            M.stride(), gOM.stride(), gOF.stride(), RM.stride(), gM.stride(), gF.stride(),
             TILE_L=TILE_L,
         )
 
@@ -146,35 +116,21 @@ class ParallelScanFunction(torch.autograd.Function):
         # Compute partial sums
         grid_inter = (P,)
         inter_block_scan_bwd[grid_inter](
-            # --- Input & Output Pointers for the Scan of the Entire Block ---
             BM, gBM, gBF,
-            # --- Dimensions ---
             BM.shape[0],
-            # --- Strides ---
-            BM.stride(0), BM.stride(1), BM.stride(2), BM.stride(3),
-            gBM.stride(0), gBM.stride(1), gBM.stride(2), gBM.stride(3),
-            gBF.stride(0), gBF.stride(1), gBF.stride(2), gBF.stride(3),
+            BM.stride(), gBM.stride(), gBF.stride(),
         )
 
         # Parallel scan epilogue to add partial sums to each block
-        grid_epilogue = (triton.cdiv(L, TILE_L), P)
+        grid_epilogue = (P, triton.cdiv(L, TILE_L))
         parallel_scan_epilogue_bwd[grid_epilogue](
-            # --- Input and Output Pointers for the Cumalative Scan ---
             OM, OF,
             BM, gBM, gBF,
             RM, gM, gF,
-            # --- Dimensions ---
             L,
-            # --- Strides ---
-            OM.stride(0), OM.stride(1), OM.stride(2), OM.stride(3),
-            OF.stride(0), OF.stride(1), OF.stride(2), OF.stride(3),
-            BM.stride(0), BM.stride(1), BM.stride(2), BM.stride(3),
-            gBM.stride(0), gBM.stride(1), gBM.stride(2), gBM.stride(3),
-            gBF.stride(0), gBF.stride(1), gBF.stride(2), gBF.stride(3),
-            RM.stride(0), RM.stride(1), RM.stride(2), RM.stride(3),
-            gM.stride(0), gM.stride(1), gM.stride(2), gM.stride(3),
-            gF.stride(0), gF.stride(1), gF.stride(2), gF.stride(3),
-            # --- Compile-time Constants ---
+            OM.stride(), OF.stride(), 
+            BM.stride(), gBM.stride(), gBF.stride(), 
+            RM.stride(), gM.stride(), gF.stride(),
             TILE_L=TILE_L,
         )
 
