@@ -7,30 +7,25 @@ import triton.language as tl
 # ===============================================
 
 @triton.jit
-def get_offsets(l_offsets, stride_l, stride_p):
-    bidp = tl.program_id(0)
-    return l_offsets * stride_l + bidp * stride_p
-
-@triton.jit
 def load_2x2(ptr, offsets, strides, mask=None, others=None):
-    bidp = tl.program_id(0)
-    ptr = ptr + offsets * strides[0] + bidp * strides[1]
+    bidb, bidp = tl.program_id(0), tl.program_id(1)
+    ptr = ptr + bidb * strides[0] + offsets * strides[1] + bidp * strides[2]
     others = (None,) * 4 if mask is None else ((0.0,) * 4 if others is None else others)
     return (
         tl.load(ptr, mask=mask, other=others[0]),
-        tl.load(ptr + strides[3], mask=mask, other=others[1]),
-        tl.load(ptr + strides[2], mask=mask, other=others[2]),
-        tl.load(ptr + strides[2] + strides[3], mask=mask, other=others[3]),
+        tl.load(ptr + strides[4], mask=mask, other=others[1]),
+        tl.load(ptr + strides[3], mask=mask, other=others[2]),
+        tl.load(ptr + strides[3] + strides[4], mask=mask, other=others[3]),
     )
 
 @triton.jit
 def store_2x2(ptr, offsets, strides, Vs, mask=None):
-    bidp = tl.program_id(0)
-    ptr = ptr + offsets * strides[0] + bidp * strides[1]
+    bidb, bidp = tl.program_id(0), tl.program_id(1)
+    ptr = ptr + bidb * strides[0] + offsets * strides[1] + bidp * strides[2]
     tl.store(ptr, Vs[0], mask=mask)
-    tl.store(ptr + strides[3], Vs[1], mask=mask)
-    tl.store(ptr + strides[2], Vs[2], mask=mask)
-    tl.store(ptr + strides[2] + strides[3], Vs[3], mask=mask)
+    tl.store(ptr + strides[4], Vs[1], mask=mask)
+    tl.store(ptr + strides[3], Vs[2], mask=mask)
+    tl.store(ptr + strides[3] + strides[4], Vs[3], mask=mask)
 
 # ===============================================
 # Forward Pass for LinOSS Parallel Scan
@@ -64,7 +59,7 @@ def parallel_scan_fwd(
     M_strides, F_strides, OM_strides, OF_strides,
     TILE_L: tl.constexpr,
 ):
-    bidl = tl.program_id(1)
+    bidl = tl.program_id(2)
     offsets = bidl * TILE_L + tl.arange(0, TILE_L)
     mask = offsets < L
     
@@ -102,7 +97,7 @@ def parallel_scan_epilogue_fwd(
     OM_strides, OF_strides, BM_strides, BF_strides,
     TILE_L: tl.constexpr,
 ):
-    bidl = tl.program_id(1)
+    bidl = tl.program_id(2)
     offsets = bidl * TILE_L + tl.arange(0, TILE_L)
     mask = offsets < L
     
@@ -176,7 +171,7 @@ def parallel_scan_bwd(
     M_strides, gOM_strides, gOF_strides, RM_strides, gM_strides, gF_strides,
     TILE_L: tl.constexpr,
 ):
-    bidl = tl.program_id(1)
+    bidl = tl.program_id(2)
     offsets = bidl * TILE_L + tl.arange(0, TILE_L)
     mask = offsets < L
 
@@ -223,8 +218,8 @@ def parallel_scan_epilogue_bwd(
     RM_strides, gM_strides, gF_strides,
     TILE_L: tl.constexpr,
 ):
-    bidl = tl.program_id(1)
-    numl = tl.num_programs(1)
+    bidl = tl.program_id(2)
+    numl = tl.num_programs(2)
     offsets = bidl * TILE_L + tl.arange(0, TILE_L)
     l_mask = offsets < L
     b_mask = bidl + 1 < numl
