@@ -123,6 +123,95 @@ class IMLayer(_AbstractLinOSSLayer):
         return xs
 
 
+class IMEXLayer(_AbstractLinOSSLayer):
+    def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max):
+        super().__init__()
+
+        # Initialize parameters
+        self.steps = nn.Parameter(torch.empty(state_dim))
+        init.normal_(self.steps, std=0.5)
+
+        self.A_diag = nn.Parameter(torch.empty(state_dim))
+        init.uniform_(self.A_diag, 0.0, 1.0)  # Matches jax.random.uniform default
+
+        self.B = nn.Parameter(torch.empty(state_dim, hidden_dim, 2))
+        std_b = 1.0 / torch.sqrt(torch.tensor(hidden_dim, dtype=torch.float32))
+        init.uniform_(self.B, -std_b, std_b)
+
+        self.C = nn.Parameter(torch.empty(hidden_dim, state_dim, 2))
+        std_c = 1.0 / torch.sqrt(torch.tensor(state_dim, dtype=torch.float32))
+        init.uniform_(self.C, -std_c, std_c)
+
+        self.D = nn.Parameter(torch.empty(hidden_dim))
+        init.normal_(self.D, std=1.0)
+
+    def _recurrence(self, A_diag, B, input_sequence, step):
+        """Compute the LxP output of LinOSS-IM given an LxH or BxLxH input.
+        Args:
+            A_diag          (float32):      diagonal state matrix     (P,)
+            B               (float32):      input matrix              (P, H, 2)
+            input_sequence  (float32):      input sequence            (L, H) or (B, L, H)
+            step            (float):        discretization time-step  (P,)
+        Returns:
+            ys              (float32):      SSM states                (L, P, 2) or (B, L, P, 2)
+        """
+        # Use '...' to handle optional batch dim
+        Bu_elements = torch.einsum("...lh,pht->...lpt", input_sequence, B)
+
+        M_11 = torch.ones_like(A_diag)
+        M_12 = -1.0 * step * A_diag
+        M_21 = step
+        M_22 = 1.0 - (step**2.0) * A_diag
+
+        M = torch.cat([M_11, M_12, M_21, M_22])
+
+        L = input_sequence.shape[-2]
+        
+        # If batched, expand M to (B, 4*P)
+        if input_sequence.dim() == 3:
+            B = input_sequence.shape[0]
+            M_elements = M.unsqueeze(0).expand(B, -1) # (B, 4*P)
+        else:
+            M_elements = M # (4*P,)
+
+        # Reshape params for broadcasting with (..., L, P, 2)
+        view_shape = (1, -1, 1) # Shape for (L, P, 2)
+        if input_sequence.dim() == 3:
+            view_shape = (1, 1, -1, 1) # Shape for (B, L, P, 2)
+
+        step_b = step.view(view_shape)
+
+        F1 = Bu_elements * step_b
+        F2 = Bu_elements * (step_b**2.0)
+        
+        # F shape is (..., L, 2*P, 2)
+        F = torch.cat((F1, F2), dim=-2) # Concat on the P dim
+
+        # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
+        _, xs = ParallelScanFunction.apply(M_elements, F)
+        
+        # Return (..., L, P, 2)
+        return xs[..., A_diag.shape[0] :, :]
+
+    def forward(self, input_sequence):
+        # input_sequence is (L, H) or (B, L, H)
+        steps = torch.sigmoid(self.steps)
+        A_diag = F.relu(self.A_diag)
+
+        # ys is (..., L, P, 2)
+        ys = self._recurrence(A_diag, self.B, input_sequence, steps)
+
+        # Apply SSM Output Operations Cx + Du
+        # C is (H, P, 2)
+        # Cy_einsum is (..., L, H, 2)
+        Cy_complex = torch.einsum("...lpt,hpt->...lht", ys, self.C)
+        Cy = Cy_complex[..., 0] - Cy_complex[..., 1]
+        Du = input_sequence * self.D
+        xs = Cy + Du
+
+        return xs
+
+
 class LinOSSBlock(nn.Module):
     def __init__(
         self,
