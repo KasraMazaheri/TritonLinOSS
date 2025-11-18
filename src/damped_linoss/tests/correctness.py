@@ -2,12 +2,12 @@
 Pytest-based correctness tests for TritonLinOSS implementation
 """
 
-import pytest
-import numpy as np
 import jax.random as jr
+import numpy as np
+import pytest
 import torch
-from src.damped_linoss.tests.utils import compute_differences, create_model_pair
 
+from src.damped_linoss.tests.utils import compute_differences, create_model_pair
 
 SEED = 42
 

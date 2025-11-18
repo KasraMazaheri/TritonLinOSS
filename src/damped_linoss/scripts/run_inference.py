@@ -11,25 +11,26 @@ Arguments for `run_inference.py`:
                                 (this is data-intensive). Defaults to False.
 """
 
-import time
+import argparse
 import os
-import sys
 import pickle
-import numpy as np
+import sys
+import time
+from pathlib import Path
+from typing import Optional
+
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import equinox as eqx
+import numpy as np
 from tqdm import tqdm
-import argparse
-from pathlib import Path
-from typing import Optional
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
-from linoss.models.create_model import create_model
 from linoss.data.create_dataset import create_dataset
+from linoss.models.create_model import create_model
 
 
 def load_pickle(filename):
@@ -146,7 +147,7 @@ def run_inference(
 
         print(f"Inference time: {total_time:.4f} seconds")
         print(f"Average time per sample: {total_time / len(inputs):.6f} seconds")
-        print(f"MSE: {np.mean((outputs - truth)**2)}")
+        print(f"MSE: {np.mean((outputs - truth) ** 2)}")
 
         # Only save original data
         if dataset_args["time_duration"] is not None:

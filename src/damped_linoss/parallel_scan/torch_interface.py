@@ -2,12 +2,12 @@ import torch
 import triton
 
 from .triton_parallel_scan import (
-    parallel_scan_fwd,
-    inter_block_scan_fwd,
-    parallel_scan_epilogue_fwd,
-    parallel_scan_bwd,
     inter_block_scan_bwd,
+    inter_block_scan_fwd,
+    parallel_scan_bwd,
     parallel_scan_epilogue_bwd,
+    parallel_scan_epilogue_fwd,
+    parallel_scan_fwd,
 )
 
 
@@ -18,7 +18,7 @@ class ParallelScanFunction(torch.autograd.Function):
         The forward pass is identical to your original wrapper function.
         We save the inputs and outputs for the backward pass.
         """
-        if M.ndim == 1: # Unbatched
+        if M.ndim == 1:  # Unbatched
             assert F.ndim == 3
             M = M.unsqueeze(0)
             F = F.unsqueeze(0)
@@ -41,37 +41,49 @@ class ParallelScanFunction(torch.autograd.Function):
         # First parallel scan
         grid = (B, P, triton.cdiv(L, TILE_L))
         parallel_scan_fwd[grid](
-            M, F,
-            OM, OF,
+            M,
+            F,
+            OM,
+            OF,
             L,
-            M.stride(), F.stride(), OM.stride(), OF.stride(),
+            M.stride(),
+            F.stride(),
+            OM.stride(),
+            OF.stride(),
             TILE_L=TILE_L,
         )
 
         num_blocks_l = triton.cdiv(L, TILE_L)
         if num_blocks_l > 1:
-            BM = OM[:, TILE_L - 1::TILE_L].clone()
-            BF = OF[:, TILE_L - 1::TILE_L].clone()
+            BM = OM[:, TILE_L - 1 :: TILE_L].clone()
+            BF = OF[:, TILE_L - 1 :: TILE_L].clone()
 
             # Compute partial sums
             grid_inter = (B, P)
             inter_block_scan_fwd[grid_inter](
-                BM, BF,
+                BM,
+                BF,
                 BM.shape[1],
-                BM.stride(), BF.stride(),
+                BM.stride(),
+                BF.stride(),
             )
 
             # Parallel scan epilogue to add partial sums to each block
             # Note that the first block does not need to be updated with the partial sums
             grid_epilogue = (B, P, num_blocks_l - 1)
             parallel_scan_epilogue_fwd[grid_epilogue](
-                OM[:, TILE_L:], OF[:, TILE_L:],
-                BM, BF,
+                OM[:, TILE_L:],
+                OF[:, TILE_L:],
+                BM,
+                BF,
                 L - TILE_L,
-                OM.stride(), OF.stride(), BM.stride(), BF.stride(),
+                OM.stride(),
+                OF.stride(),
+                BM.stride(),
+                BF.stride(),
                 TILE_L=TILE_L,
             )
-        
+
         # Save tensors and constants for backward pass
         ctx.save_for_backward(M, F, OM, OF)
         ctx.TILE_L = TILE_L
@@ -93,7 +105,7 @@ class ParallelScanFunction(torch.autograd.Function):
         assert M.shape == (B, L, P, 2, 2)
         assert F.shape == (B, L, P, 2, 2)
 
-        if gOM.ndim == 2: # Unbatched
+        if gOM.ndim == 2:  # Unbatched
             assert gOF.ndim == 3
             gOM = gOM.unsqueeze(0)
             gOF = gOF.unsqueeze(0)
@@ -112,35 +124,58 @@ class ParallelScanFunction(torch.autograd.Function):
         # First parallel scan
         grid = (B, P, triton.cdiv(L, TILE_L))
         parallel_scan_bwd[grid](
-            M, gOM, gOF,
-            RM, gM, gF,
+            M,
+            gOM,
+            gOF,
+            RM,
+            gM,
+            gF,
             L,
-            M.stride(), gOM.stride(), gOF.stride(), RM.stride(), gM.stride(), gF.stride(),
+            M.stride(),
+            gOM.stride(),
+            gOF.stride(),
+            RM.stride(),
+            gM.stride(),
+            gF.stride(),
             TILE_L=TILE_L,
         )
 
-        BM  = RM[:, 0::TILE_L].clone()
+        BM = RM[:, 0::TILE_L].clone()
         gBM = gM[:, 0::TILE_L].clone()
         gBF = gF[:, 0::TILE_L].clone()
 
         # Compute partial sums
         grid_inter = (B, P)
         inter_block_scan_bwd[grid_inter](
-            BM, gBM, gBF,
+            BM,
+            gBM,
+            gBF,
             BM.shape[1],
-            BM.stride(), gBM.stride(), gBF.stride(),
+            BM.stride(),
+            gBM.stride(),
+            gBF.stride(),
         )
 
         # Parallel scan epilogue to add partial sums to each block
         grid_epilogue = (B, P, triton.cdiv(L, TILE_L))
         parallel_scan_epilogue_bwd[grid_epilogue](
-            OM, OF,
-            BM, gBM, gBF,
-            RM, gM, gF,
+            OM,
+            OF,
+            BM,
+            gBM,
+            gBF,
+            RM,
+            gM,
+            gF,
             L,
-            OM.stride(), OF.stride(), 
-            BM.stride(), gBM.stride(), gBF.stride(), 
-            RM.stride(), gM.stride(), gF.stride(),
+            OM.stride(),
+            OF.stride(),
+            BM.stride(),
+            gBM.stride(),
+            gBF.stride(),
+            RM.stride(),
+            gM.stride(),
+            gF.stride(),
             TILE_L=TILE_L,
         )
 

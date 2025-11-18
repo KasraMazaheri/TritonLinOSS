@@ -1,9 +1,10 @@
 import abc
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-import math
 
 from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
 

@@ -2,22 +2,24 @@
 This script serves as a main entrypoint to training models, executing (optionally in batched fashion)
 a series of training runs as specified by an experiment folder.
 
-One training run within an experiment corresponds to one folder in your file system, containing a 
+One training run within an experiment corresponds to one folder in your file system, containing a
 `hyperparameters.yaml` file and storing all outputs, logs, and model checkpoints for that particular run.
 
 Begin by generating a set of empty run folders containing the desired hyperparameter spread using
-`create_experiment.py`. Then run this script with the --experiment_folder flag, which will iterate 
+`create_experiment.py`. Then run this script with the --experiment_folder flag, which will iterate
 through subfolders and execute corresponding training runs.
 
 Experiment outputs can be postprocessed with `postprocess_results.py`.
 
-Batching splits the experiment workload over $num_tasks$ different processes, assuming this script is 
+Batching splits the experiment workload over $num_tasks$ different processes, assuming this script is
 launched $num_tasks$ different times, independently, with varying values of $task_id$.
 """
-import os
-import yaml
-import equinox as eqx
+
 import argparse
+import os
+
+import equinox as eqx
+import yaml
 
 from damped_linoss.train import create_dataset_model_and_train
 
@@ -64,7 +66,7 @@ if __name__ == "__main__":
         "--experiment_folder",
         type=str,
         required=True,
-        help="Absolute path to parent directory containing all subfolders to be run."
+        help="Absolute path to parent directory containing all subfolders to be run.",
     )
     parser.add_argument(
         "--task_id",

@@ -1,9 +1,10 @@
-import os
-import yaml
 import glob
+import os
 import statistics
 from collections import defaultdict
 from sys import argv
+
+import yaml
 
 
 def isfloat(value):
@@ -20,17 +21,26 @@ def make_group_key(hparams, keys):
     for k in keys:
         # Support nested keys like "training.seed"
         value = hparams
-        for subkey in k.split('.'):
+        for subkey in k.split("."):
             value = value.get(subkey, None)
             if value is None:
                 break
         parts.append(f"{k}={value}")
     return ", ".join(parts)
-    
+
 
 def main(exp_root):
     groups = defaultdict(list)
-    group_keys_to_use = ["model_name", "dataset_name", "seed", "lr", "state_dim", "hidden_dim", "num_blocks", "include_time"]
+    group_keys_to_use = [
+        "model_name",
+        "dataset_name",
+        "seed",
+        "lr",
+        "state_dim",
+        "hidden_dim",
+        "num_blocks",
+        "include_time",
+    ]
 
     # Find all results.txt in run_XXX folders under exp_root
     pattern = os.path.join(exp_root, "run_*/results.txt")
@@ -73,6 +83,7 @@ def main(exp_root):
         print(f"[{mean_score:.6f} ± {std_score:.6f}] {group_key}")
         print(f"# {num}")
         print()
+
 
 if __name__ == "__main__":
     if len(argv) < 2:

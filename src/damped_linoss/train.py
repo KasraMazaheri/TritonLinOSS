@@ -18,22 +18,23 @@ The module also includes the following key functions:
                      regularisation.
 - `make_step`: Performs a single optimisation step, updating model parameters
                based on the computed gradients.
-- `evaluate`: Computes the classification/non-classification metric given a 
+- `evaluate`: Computes the classification/non-classification metric given a
               specific dataloader split.
 - `train_model`: Handles the training loop, managing metrics, early stopping,
                  and saving progress at regular intervals.
 """
+
 import os
 import time
 import warnings
 from datetime import datetime
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 import optax
-import equinox as eqx
 
 from damped_linoss.data.create_dataset import create_dataset
 from damped_linoss.models.create_model import create_model
@@ -79,14 +80,18 @@ def calc_output(model, X, state, key, stateful, nondeterministic):
 @eqx.filter_jit
 @eqx.filter_value_and_grad(has_aux=True)
 def classification_loss(model, X, y, state, key):
-    pred_y, state = calc_output(model, X, state, key, model.stateful, model.nondeterministic)
+    pred_y, state = calc_output(
+        model, X, state, key, model.stateful, model.nondeterministic
+    )
     return jnp.mean(-jnp.sum(y * jnp.log(pred_y + 1e-8), axis=1)), state
 
 
 @eqx.filter_jit
 @eqx.filter_value_and_grad(has_aux=True)
 def regression_loss(model, X, y, state, key):
-    pred_y, state = calc_output(model, X, state, key, model.stateful, model.nondeterministic)
+    pred_y, state = calc_output(
+        model, X, state, key, model.stateful, model.nondeterministic
+    )
     return jnp.mean((jnp.squeeze(pred_y) - jnp.squeeze(y)) ** 2.0), state
 
 
@@ -121,7 +126,7 @@ def evaluate(inference_model, state, dataloader_iter, key):
         metric = jnp.mean(jnp.argmax(prediction, axis=1) == jnp.argmax(y, axis=1))
     else:
         metric = jnp.mean((jnp.squeeze(prediction) - jnp.squeeze(y)) ** 2.0)
-    
+
     return metric
 
 
@@ -182,7 +187,9 @@ def train_model(
         # Make step
         X, y = data
         stepkey, key = jr.split(key, 2)
-        model, state, opt_state, value = make_step(model, X, y, loss_fn, state, opt, opt_state, stepkey)
+        model, state, opt_state, value = make_step(
+            model, X, y, loss_fn, state, opt, opt_state, stepkey
+        )
         running_loss += value
 
         # Evaluation
@@ -225,13 +232,16 @@ def train_model(
             all_train_metric.append(train_metric)
             all_val_metric.append(val_metric)
 
-            log_data = jnp.stack([
-                jnp.arange(0, step + 2, print_steps)[1:],
-                jnp.array(all_time),
-                jnp.array(all_train_metric[1:]),
-                jnp.array(all_val_metric[1:])
-            ], axis=1)
-            jnp.save(run_folder+ "/log_metrics.npy", log_data)
+            log_data = jnp.stack(
+                [
+                    jnp.arange(0, step + 2, print_steps)[1:],
+                    jnp.array(all_time),
+                    jnp.array(all_train_metric[1:]),
+                    jnp.array(all_val_metric[1:]),
+                ],
+                axis=1,
+            )
+            jnp.save(run_folder + "/log_metrics.npy", log_data)
 
     # Log final results
     print(f"Test metric: {test_metric}")
@@ -263,7 +273,7 @@ def create_dataset_model_and_train(
     delete_file_if_exists(run_folder + "/state.eqx")
 
     f = open(run_folder + "/metadata.txt", "a")
-    f.write(f'Time of execution: {datetime.now().strftime("%Y%m%d_%H%M%S")} \n')
+    f.write(f"Time of execution: {datetime.now().strftime('%Y%m%d_%H%M%S')} \n")
     f.write("log_metrics.npy columns: [step, time, train metric, val metric] \n")
     f.close()
 
@@ -272,9 +282,11 @@ def create_dataset_model_and_train(
         name=dataset_name,
         data_dir=safe_load(hyperparameters, "data_dir", str),
         classification=safe_load(hyperparameters, "classification", bool),
-        time_duration=safe_load(hyperparameters, "time_duration", float) if safe_load(hyperparameters, "include_time", bool) else None,
+        time_duration=safe_load(hyperparameters, "time_duration", float)
+        if safe_load(hyperparameters, "include_time", bool)
+        else None,
         use_presplit=safe_load(hyperparameters, "use_presplit", bool),
-        key=dataset_key
+        key=dataset_key,
     )
 
     print(f"Creating model {model_name}")

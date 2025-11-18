@@ -8,11 +8,13 @@ An example is provided for generating D-LinOSS hyperparameter sweeps, but note t
 may be necessary for other models, and some of these hyperparameters are only relevant for LinOSS. To see a list
 of the model-specific hyperparameters, look in `linoss/models/generate_model.py`.
 """
-import os
-import yaml
+
 import itertools
-import numpy as np
+import os
 from pathlib import Path
+
+import numpy as np
+import yaml
 
 # linoss/ directory
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -31,7 +33,9 @@ if __name__ == "__main__":
     num_blocks = [2, 4, 6]
     include_time = [False, True]
 
-    combos = itertools.product(seed, lr, state_dim, hidden_dim, num_blocks, include_time)
+    combos = itertools.product(
+        seed, lr, state_dim, hidden_dim, num_blocks, include_time
+    )
 
     for i, (se, lr, sd, hd, nb, tm) in enumerate(combos):
         hyperparameters = {
@@ -57,7 +61,7 @@ if __name__ == "__main__":
             "r_min": 0.9,
             "r_max": 1.0,
             "theta_max": np.pi / 2,
-            "drop_rate": 0.05
+            "drop_rate": 0.05,
         }
 
         # Write config

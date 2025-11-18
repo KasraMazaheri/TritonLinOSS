@@ -1,14 +1,14 @@
 import logging
+from typing import Tuple
 
-import jax
-import torch
-import numpy as np
 import equinox as eqx
+import jax
+import numpy as np
+import torch
+from jax.tree_util import DictKey, FlattenedIndexKey, GetAttrKey, SequenceKey
+
 from src.damped_linoss.models.LinOSS import LinOSS as LinOSSJax
 from src.damped_linoss.models.TorchLinOSS import LinOSS as LinOSSTorch
-from jax.tree_util import SequenceKey, DictKey, GetAttrKey, FlattenedIndexKey
-
-from typing import Tuple
 
 logger = logging.getLogger(__name__)
 

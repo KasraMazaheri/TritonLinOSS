@@ -1,10 +1,11 @@
-import jax.numpy as jnp
-
-import jax
-import torch
-import equinox as eqx
 import functools as ft
 from typing import Tuple
+
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import torch
+
 from src.damped_linoss.models.LinOSS import LinOSS as LinOSSJax
 from src.damped_linoss.models.TorchLinOSS import LinOSS as LinOSSTorch
 from src.damped_linoss.utils.from_jax import from_jax_to_torch

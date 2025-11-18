@@ -21,10 +21,12 @@ Public Class Methods:
 - `loop_epoch(batch_size)`: Generates data batches for one epoch
                             (i.e., a full pass through the dataset).
 """
+
 from abc import ABC, abstractmethod
-import numpy as np
+
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 
 
 class BaseDataloader(ABC):
@@ -83,6 +85,7 @@ class StandardDataloader(BaseDataloader):
     Batches and yields data that can be stored as a single block array.
     Input data should be a jnp.ndarray of shape (n_samples, n_timesteps, n_features).
     """
+
     def __init__(self, data, labels, in_memory, data_out_func):
         super().__init__(data, labels, in_memory)
 
@@ -141,6 +144,7 @@ class BucketedDataloader(BaseDataloader):
     Input data should be a list of jnp.ndarray's of shape (n_timesteps, n_features).
     Where n_timesteps are not necessarily the same length.
     """
+
     def __init__(
         self,
         data,

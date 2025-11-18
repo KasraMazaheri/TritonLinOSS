@@ -1,8 +1,9 @@
-import numpy as np
-import pickle
 import os
+import pickle
 from copy import deepcopy
 from pathlib import Path
+
+import numpy as np
 
 # linoss/ directory
 BASE_DIR = Path(__file__).resolve().parent.parent

@@ -8,6 +8,7 @@ import os
 import pickle
 import warnings
 from pathlib import Path
+
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -49,8 +50,9 @@ def create_jax_data(train_file, test_file):
     train_data, test_data = convert_data(train_data), convert_data(test_data)
 
     encoder = LabelEncoder().fit(train_labels)
-    train_labels, test_labels = encoder.transform(train_labels), encoder.transform(
-        test_labels
+    train_labels, test_labels = (
+        encoder.transform(train_labels),
+        encoder.transform(test_labels),
     )
     train_labels, test_labels = jnp.array(train_labels), jnp.array(test_labels)
 
