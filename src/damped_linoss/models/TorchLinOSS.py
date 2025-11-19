@@ -75,18 +75,18 @@ class IMLayer(_AbstractLinOSSLayer):
         M = torch.cat([M_11, M_12, M_21, M_22])
 
         L = input_sequence.shape[-2]
-        
+
         # If batched, expand M to (B, 4*P)
         if input_sequence.dim() == 3:
             B = input_sequence.shape[0]
-            M_elements = M.unsqueeze(0).expand(B, -1) # (B, 4*P)
+            M_elements = M.unsqueeze(0).expand(B, -1)  # (B, 4*P)
         else:
-            M_elements = M # (4*P,)
+            M_elements = M  # (4*P,)
 
         # Reshape params for broadcasting with (..., L, P, 2)
-        view_shape = (1, -1, 1) # Shape for (L, P, 2)
+        view_shape = (1, -1, 1)  # Shape for (L, P, 2)
         if input_sequence.dim() == 3:
-            view_shape = (1, 1, -1, 1) # Shape for (B, L, P, 2)
+            view_shape = (1, 1, -1, 1)  # Shape for (B, L, P, 2)
 
         M_11_b = M_11.view(view_shape)
         M_21_b = M_21.view(view_shape)
@@ -94,13 +94,13 @@ class IMLayer(_AbstractLinOSSLayer):
 
         F1 = M_11_b * Bu_elements * step_b
         F2 = M_21_b * Bu_elements * step_b
-        
+
         # F shape is (..., L, 2*P, 2)
-        F = torch.cat((F1, F2), dim=-2) # Concat on the P dim
+        F = torch.cat((F1, F2), dim=-2)  # Concat on the P dim
 
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
         _, xs = ParallelScanFunction.apply(M_elements, F)
-        
+
         # Return (..., L, P, 2)
         return xs[..., A_diag.shape[0] :, :]
 
@@ -166,30 +166,30 @@ class IMEXLayer(_AbstractLinOSSLayer):
         M = torch.cat([M_11, M_12, M_21, M_22])
 
         L = input_sequence.shape[-2]
-        
+
         # If batched, expand M to (B, 4*P)
         if input_sequence.dim() == 3:
             B = input_sequence.shape[0]
-            M_elements = M.unsqueeze(0).expand(B, -1) # (B, 4*P)
+            M_elements = M.unsqueeze(0).expand(B, -1)  # (B, 4*P)
         else:
-            M_elements = M # (4*P,)
+            M_elements = M  # (4*P,)
 
         # Reshape params for broadcasting with (..., L, P, 2)
-        view_shape = (1, -1, 1) # Shape for (L, P, 2)
+        view_shape = (1, -1, 1)  # Shape for (L, P, 2)
         if input_sequence.dim() == 3:
-            view_shape = (1, 1, -1, 1) # Shape for (B, L, P, 2)
+            view_shape = (1, 1, -1, 1)  # Shape for (B, L, P, 2)
 
         step_b = step.view(view_shape)
 
         F1 = Bu_elements * step_b
         F2 = Bu_elements * (step_b**2.0)
-        
+
         # F shape is (..., L, 2*P, 2)
-        F = torch.cat((F1, F2), dim=-2) # Concat on the P dim
+        F = torch.cat((F1, F2), dim=-2)  # Concat on the P dim
 
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
         _, xs = ParallelScanFunction.apply(M_elements, F)
-        
+
         # Return (..., L, P, 2)
         return xs[..., A_diag.shape[0] :, :]
 
@@ -200,6 +200,132 @@ class IMEXLayer(_AbstractLinOSSLayer):
 
         # ys is (..., L, P, 2)
         ys = self._recurrence(A_diag, self.B, input_sequence, steps)
+
+        # Apply SSM Output Operations Cx + Du
+        # C is (H, P, 2)
+        # Cy_einsum is (..., L, H, 2)
+        Cy_complex = torch.einsum("...lpt,hpt->...lht", ys, self.C)
+        Cy = Cy_complex[..., 0] - Cy_complex[..., 1]
+        Du = input_sequence * self.D
+        xs = Cy + Du
+
+        return xs
+
+
+class DampedLayer(_AbstractLinOSSLayer):
+    def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max):
+        super().__init__()
+
+        self.steps = nn.Parameter(torch.empty(state_dim))
+        init.normal_(self.steps, std=0.5)
+        steps = torch.sigmoid(self.steps)
+
+        mags = torch.sqrt(torch.rand(state_dim) * (r_max**2 - r_min**2) + r_min**2)
+        G_diag_init = (1 - mags**2) / (steps.detach() * mags**2)
+        self.G_diag = nn.Parameter(G_diag_init)
+
+        theta = torch.rand(state_dim) * theta_max
+        A_diag_init = self._map_theta_to_A(
+            theta, F.relu(self.G_diag.detach()), steps.detach()
+        )
+        self.A_diag = nn.Parameter(A_diag_init)
+
+        self.B = nn.Parameter(torch.empty(state_dim, hidden_dim, 2))
+        std_b = 1.0 / torch.sqrt(torch.tensor(hidden_dim, dtype=torch.float32))
+        init.uniform_(self.B, -std_b, std_b)
+
+        self.C = nn.Parameter(torch.empty(hidden_dim, state_dim, 2))
+        std_c = 1.0 / torch.sqrt(torch.tensor(state_dim, dtype=torch.float32))
+        init.uniform_(self.C, -std_c, std_c)
+
+        self.D = nn.Parameter(torch.empty(hidden_dim))
+        init.normal_(self.D, std=1.0)
+
+    def _map_theta_to_A(self, thetas, G_diag, steps):
+        """Map theta angles to A diagonal values."""
+        cos_theta = torch.cos(thetas)
+        tan_theta = torch.tan(thetas)
+        tan_theta_sq = tan_theta**2
+
+        sqrt_term = 4 * torch.sqrt(
+            steps**4 * cos_theta ** (-2) + steps**5 * G_diag * cos_theta ** (-2)
+        )
+
+        common_term = steps**2 * (
+            -4
+            - 2 * steps * G_diag
+            - 4 * tan_theta_sq
+            - 2 * steps * G_diag * tan_theta_sq
+        )
+
+        denominator = 2 * steps**4 * (1 + tan_theta_sq)
+
+        A_plus = (sqrt_term - common_term) / denominator
+        A_minus = (-sqrt_term - common_term) / denominator
+
+        A_diag = torch.where(thetas > math.pi / 2, A_plus, A_minus)
+
+        return A_diag
+
+    def _recurrence(self, A_diag, G_diag, B, input_sequence, step):
+        """Compute the LxP output of Damped-LinOSS given an LxH or BxLxH input.
+        Args:
+            A_diag          (float32):      diagonal state matrix     (P,)
+            G_diag          (float32):      diagonal damping matrix   (P,)
+            B               (float32):      input matrix              (P, H, 2)
+            input_sequence  (float32):      input sequence            (L, H) or (B, L, H)
+            step            (float):        discretization time-step  (P,)
+        Returns:
+            ys              (float32):      SSM states                (L, P, 2) or (B, L, P, 2)
+        """
+        # Use '...' to handle optional batch dim
+        Bu_elements = torch.einsum("...lh,pht->...lpt", input_sequence, B)
+
+        Identity = torch.ones_like(A_diag)
+        S = Identity + step * G_diag
+        M_11 = 1.0 / S
+        M_12 = -step / S * A_diag
+        M_21 = step / S
+        M_22 = Identity - step**2 / S * A_diag
+
+        M = torch.cat([M_11, M_12, M_21, M_22])
+
+        L = input_sequence.shape[-2]
+
+        # If batched, expand M to (B, 4*P)
+        if input_sequence.dim() == 3:
+            B = input_sequence.shape[0]
+            M_elements = M.unsqueeze(0).expand(B, -1)  # (B, 4*P)
+        else:
+            M_elements = M  # (4*P,)
+
+        # Reshape params for broadcasting with (..., L, P, 2)
+        view_shape = (1, -1, 1)  # Shape for (L, P, 2)
+        if input_sequence.dim() == 3:
+            view_shape = (1, 1, -1, 1)  # Shape for (B, L, P, 2)
+
+        step_b = step.view(view_shape)
+        S_b = S.view(view_shape)
+
+        F1 = step_b * (1.0 / S_b) * Bu_elements
+        F2 = (step_b**2) * (1.0 / S_b) * Bu_elements
+
+        # F shape is (..., L, 2*P, 2)
+        F = torch.cat((F1, F2), dim=-2)  # Concat on the P dim
+
+        # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
+        _, xs = ParallelScanFunction.apply(M_elements, F)
+
+        # Return (..., L, P, 2)
+        return xs[..., A_diag.shape[0] :, :]
+
+    def forward(self, input_sequence):
+        # input_sequence is (L, H) or (B, L, H)
+        steps = torch.sigmoid(self.steps)
+        G_diag = F.relu(self.G_diag)
+
+        # ys is (..., L, P, 2)
+        ys = self._recurrence(self.A_diag, G_diag, self.B, input_sequence, steps)
 
         # Apply SSM Output Operations Cx + Du
         # C is (H, P, 2)
@@ -226,8 +352,8 @@ class LinOSSBlock(nn.Module):
         super().__init__()
         layer_map = {
             "IM": IMLayer,
-            # "IMEX": IMEXLayer,
-            # "Damped": DampedLayer,
+            "IMEX": IMEXLayer,
+            "Damped": DampedLayer,
         }
         if layer_name not in layer_map.keys():
             raise KeyError(f"Layer name {layer_name} not defined.")
@@ -235,7 +361,7 @@ class LinOSSBlock(nn.Module):
         # BatchNorm1d *requires* (N, C, L)
         # Our C (Channels) is hidden_dim
         self.norm = nn.BatchNorm1d(hidden_dim, affine=False)
-        
+
         self.layer = layer_map[layer_name](
             state_dim,
             hidden_dim,
@@ -259,14 +385,14 @@ class LinOSSBlock(nn.Module):
         if x.dim() == 2:
             x_norm = x_norm.squeeze(0)
         x = x_norm
-        
+
         x = self.layer(x)
         x = F.gelu(x)
         x = self.drop(x)
         x = self.glu(x)
         x = self.drop(x)
         x = skip + x
-        
+
         return x
 
 
@@ -286,9 +412,10 @@ class LinOSS(nn.Module):
         r_max=1.0,
         theta_max=math.pi,
         drop_rate=0.05,
+        **kwargs,
     ):
         super().__init__()
-        
+
         self.linear_encoder = nn.Linear(input_dim, hidden_dim)
         self.blocks = nn.ModuleList(
             [
@@ -318,7 +445,7 @@ class LinOSS(nn.Module):
             x = block(x)
 
         if self.classification:
-            x = torch.mean(x, dim=-2) 
+            x = torch.mean(x, dim=-2)
             x = self.linear_decoder(x)
             x = F.softmax(x, dim=-1)
         else:
