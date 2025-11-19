@@ -86,21 +86,3 @@ def from_jax_to_torch(jax_model: LinOSSJax, torch_model: LinOSSTorch) -> None:
     for param in torch_model_params.keys():
         if torch_model_params[param] is not True:
             logger.warning(f"Parameter {param} was not copied from JAX model.")
-
-
-if __name__ == "__main__":
-    params = {
-        "layer_name": "IM",
-        "input_dim": 10,
-        "state_dim": 10,
-        "hidden_dim": 10,
-        "output_dim": 10,
-        "num_blocks": 10,
-        "classification": False,
-        "tanh_output": False,
-        "output_step": 1,
-        "key": jax.random.PRNGKey(42),
-    }
-    jax_model = LinOSSJax(**params)
-    torch_model = LinOSSTorch(**params)
-    from_jax_to_torch(jax_model, torch_model)
