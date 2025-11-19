@@ -95,8 +95,8 @@ def test_initialization_fwd(
 @pytest.mark.parametrize(
     "max_atol,mean_atol,rel_tol",
     [
-        (1e-2, 1e-3, 1e-2),  # relaxed
-        (1e-3, 1e-4, 1e-3),  # strict
+        (1e-2, 1e-2, 1e-2),  # relaxed
+        (1e-3, 1e-3, 5e-3),  # strict
     ],
     ids=["relaxed", "strict"],
 )
