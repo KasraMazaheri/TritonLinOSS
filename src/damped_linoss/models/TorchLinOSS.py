@@ -4,8 +4,53 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 import math
+from typing import Tuple
 
 from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
+from src.damped_linoss.parallel_scan.torch_associative_scan import associative_scan
+
+
+SCAN_TYPE = Tuple[torch.Tensor, torch.Tensor]
+
+
+def binary_operator(q_i: SCAN_TYPE, q_j: SCAN_TYPE) -> SCAN_TYPE:
+    """
+    Binary operator for parallel scan of linear recurrence.
+
+    Args:
+        q_i: tuple (A_i, b_i)
+             A_i shape: (..., 4 * P)
+             b_i shape: (..., 2 * P, 2)
+        q_j: tuple (A_j, b_j)
+    """
+    A_i, b_i = q_i
+    A_j, b_j = q_j
+
+    iA, iB, iC, iD = torch.chunk(A_i, 4, dim=-1)
+    jA, jB, jC, jD = torch.chunk(A_j, 4, dim=-1)
+
+    A_new_part = jA * iA + jB * iC
+    B_new_part = jA * iB + jB * iD
+    C_new_part = jC * iA + jD * iC
+    D_new_part = jC * iB + jD * iD
+
+    # Concatenate back to shape (..., 4*P)
+    A_new = torch.cat([A_new_part, B_new_part, C_new_part, D_new_part], dim=-1)
+
+    b_i1, b_i2 = torch.chunk(b_i, 2, dim=-2)
+
+    # unsqueeze the last dim of A parts to broadcast over the complex dimension of b.
+    jA_bs = jA.unsqueeze(-1)
+    jB_bs = jB.unsqueeze(-1)
+    jC_bs = jC.unsqueeze(-1)
+    jD_bs = jD.unsqueeze(-1)
+
+    new_b1 = jA_bs * b_i1 + jB_bs * b_i2
+    new_b2 = jC_bs * b_i1 + jD_bs * b_i2
+
+    new_b = torch.cat([new_b1, new_b2], dim=-2)
+
+    return A_new, new_b + b_j
 
 
 class GLU(nn.Module):
@@ -26,6 +71,10 @@ class GLU(nn.Module):
 
 
 class _AbstractLinOSSLayer(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.use_triton = False  # True if torch.cuda.is_available() else False
+
     @abc.abstractmethod
     def _recurrence(self):
         raise NotImplementedError
@@ -99,7 +148,17 @@ class IMLayer(_AbstractLinOSSLayer):
         F = torch.cat((F1, F2), dim=-2)  # Concat on the P dim
 
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
-        _, xs = ParallelScanFunction.apply(M_elements, F)
+        P = A_diag.shape[0]
+        if self.use_triton:
+            # _, xs = ParallelScanFunction.apply(M_elements, F)
+            pass
+        else:
+            _, xs = associative_scan(
+                binary_operator,
+                (torch.broadcast_to(M_elements.unsqueeze(1), (B, L, 4 * P)), F),
+                reverse=False,
+                # axis=-3,
+            )
 
         # Return (..., L, P, 2)
         return xs[..., A_diag.shape[0] :, :]
@@ -188,7 +247,17 @@ class IMEXLayer(_AbstractLinOSSLayer):
         F = torch.cat((F1, F2), dim=-2)  # Concat on the P dim
 
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
-        _, xs = ParallelScanFunction.apply(M_elements, F)
+        P = A_diag.shape[0]
+        if self.use_triton:
+            # _, xs = ParallelScanFunction.apply(M_elements, F)
+            pass
+        else:
+            _, xs = associative_scan(
+                binary_operator,
+                (torch.broadcast_to(M_elements.unsqueeze(1), (B, L, 4 * P)), F),
+                reverse=False,
+                # axis=-3,
+            )
 
         # Return (..., L, P, 2)
         return xs[..., A_diag.shape[0] :, :]
@@ -314,7 +383,17 @@ class DampedLayer(_AbstractLinOSSLayer):
         F = torch.cat((F1, F2), dim=-2)  # Concat on the P dim
 
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
-        _, xs = ParallelScanFunction.apply(M_elements, F)
+        P = A_diag.shape[0]
+        if self.use_triton:
+            # _, xs = ParallelScanFunction.apply(M_elements, F)
+            pass
+        else:
+            _, xs = associative_scan(
+                binary_operator,
+                (torch.broadcast_to(M_elements.unsqueeze(1), (B, L, 4 * P)), F),
+                reverse=False,
+                # axis=-3,
+            )
 
         # Return (..., L, P, 2)
         return xs[..., A_diag.shape[0] :, :]
