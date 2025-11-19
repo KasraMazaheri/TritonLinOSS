@@ -1,12 +1,16 @@
-<h1 align='center'> Learning to Dissipate Energy in Oscillatory State-Space Models <br></h1>
+<h1 align='center'> TritonLinOSS <br></h1>
 
-This repository implements Damped Linear Oscillatory State-Space Models (D-LinOSS), an expressive and efficient extension to the original LinOSS model. This codebase is adapted from the <a href="https://github.com/tk-rusch/linoss">linoss</a> and <a href="https://github.com/Benjamin-Walker/log-neural-cdes">log-neural-cdes</a> repositories.
+This repository implements a torch-based implementation of Damped Linear Oscillatory State-Space Models (D-LinOSS) using efficient Triton kernels as its backend. This codebase is adapted from the <a href="https://github.com/jaredbmit/damped-linoss">Learning to Dissipate Energy in Oscillatory State-Space Models</a> repository.
 
 ---
 
 ## Requirements
 
-This repository is implemented in python 3.10 and uses Jax as the machine learning framework.
+This repository is implemented in python 3.10 and uses Jax and PyTorch as the machine learning framework, with Triton as the backend for the custom parallel scan used in the PyTorch implementation.
+
+## PyTorch Implementation
+
+The PyTorch-based implementation of D-LinOSS can be found at `src/damped_linoss/models/TorchLinOSS.py`. This implementation is functionally equivalent to `src/damped_linoss/models/LinOSS.py` as is verified by the test suits.
 
 ### Environment
 
@@ -17,12 +21,12 @@ Installation:
 curl -Ls https://astral.sh/uv/install.sh | sh
 ```
 
-Configuring the linoss environment:
+Configuring the TritonLinOSS environment:
 ```
-cd linoss/
+cd TritonLinOSS/
 uv sync
 ```
-This will create a virtual environment in `linoss/.venv`.
+This will create a virtual environment in `TritonLinOSS/.venv`.
 
 Use `uv run` instead of `python` when running scripts.
 
@@ -31,7 +35,7 @@ Then run: `uv pip install packaging`
 
 ---
 
-## Data
+<!-- ## Data
 
 The folder `scripts` contains the scripts for downloading data, preprocessing the data, and creating dataloaders and datasets. Raw data should be downloaded into the `data/raw` folder. Processed data should be saved into the `data/processed` folder in the following format: 
 ```
@@ -62,16 +66,4 @@ The code for training and evaluating the models is contained in `linoss/train.py
 To view the outputs of an experiment:
 ```
 uv run process_results.py <experiment_folder>
-```
-
----
-
-## Reproducing the Results
-
-(TODO: re-running experiments with new codebase)
-
-```
-uv run run_experiments.py --experiment_folder experiments/D-LinOSS/PPG
-```
-
----
+``` -->
