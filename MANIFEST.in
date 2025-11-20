@@ -1,0 +1,11 @@
+include README.md
+include LICENSE
+include pyproject.toml
+
+recursive-include src/damped_linoss *.py
+recursive-exclude * __pycache__
+recursive-exclude * *.pyc
+recursive-exclude * *.pyo
+recursive-exclude * .DS_Store
+
+

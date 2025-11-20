@@ -6,7 +6,12 @@ import torch.nn.init as init
 import math
 from typing import Tuple
 
-from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
+try:
+    from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction, TRITON_AVAILABLE
+except ImportError:
+    TRITON_AVAILABLE = False
+    ParallelScanFunction = None
+
 from src.damped_linoss.parallel_scan.torch_associative_scan import associative_scan
 
 
@@ -73,7 +78,7 @@ class GLU(nn.Module):
 class _AbstractLinOSSLayer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.use_triton = True if torch.cuda.is_available() else False
+        self.use_triton = TRITON_AVAILABLE and torch.cuda.is_available()
 
     @abc.abstractmethod
     def _recurrence(self):

@@ -4,31 +4,35 @@ This repository implements Damped Linear Oscillatory State-Space Models (D-LinOS
 
 ---
 
-## Requirements
 
-This repository is implemented in python 3.10 and uses Jax as the machine learning framework.
+## Installation
 
-### Environment
+#### Option 1: With CUDA/Triton support
 
-This project uses `uv` as the Python package manager and environment tool.
-
-Installation:
-```
-curl -Ls https://astral.sh/uv/install.sh | sh
+```bash
+pip install -e ".[cuda]"
 ```
 
-Configuring the linoss environment:
+#### Option 2: CPU-only or without Triton
+
+If CUDA is not available (works with torch.compile):
+
+```bash
+pip install -e .
 ```
-cd linoss/
-uv sync
+
+#### Development Installation (with tests)
+
+
+```bash
+pip install -e ".[dev]"
 ```
-This will create a virtual environment in `linoss/.venv`.
 
-Use `uv run` instead of `python` when running scripts.
+#### original JAX implementation
 
-If running `scripts/process_uea.py` throws this error: No module named 'packaging'
-Then run: `uv pip install packaging`
-
+```bash
+pip install -e ".[jax]"
+```
 ---
 
 ## Data

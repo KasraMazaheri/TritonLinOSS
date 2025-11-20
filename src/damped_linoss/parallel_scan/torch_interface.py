@@ -1,14 +1,18 @@
 import torch
-import triton
 
-from .triton_parallel_scan import (
-    parallel_scan_fwd,
-    inter_block_scan_fwd,
-    parallel_scan_epilogue_fwd,
-    parallel_scan_bwd,
-    inter_block_scan_bwd,
-    parallel_scan_epilogue_bwd,
-)
+try:
+    import triton
+    from .triton_parallel_scan import (
+        parallel_scan_fwd,
+        inter_block_scan_fwd,
+        parallel_scan_epilogue_fwd,
+        parallel_scan_bwd,
+        inter_block_scan_bwd,
+        parallel_scan_epilogue_bwd,
+    )
+    TRITON_AVAILABLE = True
+except ImportError:
+    TRITON_AVAILABLE = False
 
 
 class ParallelScanFunction(torch.autograd.Function):
@@ -18,6 +22,12 @@ class ParallelScanFunction(torch.autograd.Function):
         The forward pass is identical to your original wrapper function.
         We save the inputs and outputs for the backward pass.
         """
+        if not TRITON_AVAILABLE:
+            raise RuntimeError(
+                "Triton is not available. Install with 'pip install damped-linoss[cuda]' "
+                "or use the torch-compiled version instead."
+            )
+        
         if M.ndim == 1: # Unbatched
             assert F.ndim == 3
             M = M.unsqueeze(0)
