@@ -73,7 +73,7 @@ class GLU(nn.Module):
 class _AbstractLinOSSLayer(nn.Module):
     def __init__(self):
         super().__init__()
-        self.use_triton = False  # True if torch.cuda.is_available() else False
+        self.use_triton = True if torch.cuda.is_available() else False
 
     @abc.abstractmethod
     def _recurrence(self):
@@ -149,15 +149,22 @@ class IMLayer(_AbstractLinOSSLayer):
 
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
         P = A_diag.shape[0]
+
         if self.use_triton:
-            # _, xs = ParallelScanFunction.apply(M_elements, F)
-            pass
+            _, xs = ParallelScanFunction.apply(M_elements, F)
         else:
+            if input_sequence.dim() == 3:
+                M_expanded = M_elements.unsqueeze(1).expand(-1, L, -1)
+                scan_axis = 1
+            else:
+                M_expanded = M_elements.unsqueeze(0).expand(L, -1)
+                scan_axis = 0
+
             _, xs = associative_scan(
                 binary_operator,
-                (torch.broadcast_to(M_elements.unsqueeze(1), (B, L, 4 * P)), F),
+                (M_expanded, F),
                 reverse=False,
-                # axis=-3,
+                axis=scan_axis,
             )
 
         # Return (..., L, P, 2)
@@ -248,15 +255,22 @@ class IMEXLayer(_AbstractLinOSSLayer):
 
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
         P = A_diag.shape[0]
+
         if self.use_triton:
-            # _, xs = ParallelScanFunction.apply(M_elements, F)
-            pass
+            _, xs = ParallelScanFunction.apply(M_elements, F)
         else:
+            if input_sequence.dim() == 3:
+                M_expanded = M_elements.unsqueeze(1).expand(-1, L, -1)
+                scan_axis = 1
+            else:
+                M_expanded = M_elements.unsqueeze(0).expand(L, -1)
+                scan_axis = 0
+
             _, xs = associative_scan(
                 binary_operator,
-                (torch.broadcast_to(M_elements.unsqueeze(1), (B, L, 4 * P)), F),
+                (M_expanded, F),
                 reverse=False,
-                # axis=-3,
+                axis=scan_axis,
             )
 
         # Return (..., L, P, 2)
@@ -384,15 +398,22 @@ class DampedLayer(_AbstractLinOSSLayer):
 
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
         P = A_diag.shape[0]
+
         if self.use_triton:
-            # _, xs = ParallelScanFunction.apply(M_elements, F)
-            pass
+            _, xs = ParallelScanFunction.apply(M_elements, F)
         else:
+            if input_sequence.dim() == 3:
+                M_expanded = M_elements.unsqueeze(1).expand(-1, L, -1)
+                scan_axis = 1
+            else:
+                M_expanded = M_elements.unsqueeze(0).expand(L, -1)
+                scan_axis = 0
+
             _, xs = associative_scan(
                 binary_operator,
-                (torch.broadcast_to(M_elements.unsqueeze(1), (B, L, 4 * P)), F),
+                (M_expanded, F),
                 reverse=False,
-                # axis=-3,
+                axis=scan_axis,
             )
 
         # Return (..., L, P, 2)

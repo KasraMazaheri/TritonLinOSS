@@ -1,9 +1,12 @@
 import time
+import itertools
 import torch
 import jax
 import jax.numpy as jnp
 import pandas as pd
-import itertools
+import numpy as np
+from functools import partial
+
 from src.damped_linoss.models.LinOSS import binary_operator
 from src.damped_linoss.models.TorchLinOSS import (
     binary_operator as torch_binary_operator,
@@ -14,23 +17,19 @@ from src.damped_linoss.parallel_scan.torch_associative_scan import (
 from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
 
 
-def generate_torch_data(B, L, P, VAR=1e-3, requires_grad=False):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+def get_device():
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def generate_torch_data(B, L, P, dtype=torch.bfloat16, VAR=1e-3, requires_grad=False):
+    device = get_device()
     M = (
-        torch.randn(
-            B, P * 4, dtype=torch.bfloat16, device=device, requires_grad=requires_grad
-        )
+        torch.randn(B, 4 * P, dtype=dtype, device=device, requires_grad=requires_grad)
         * VAR
     )
     F = (
         torch.randn(
-            B,
-            L,
-            2 * P,
-            2,
-            dtype=torch.bfloat16,
-            device=device,
-            requires_grad=requires_grad,
+            B, L, 2 * P, 2, dtype=dtype, device=device, requires_grad=requires_grad
         )
         * VAR
     )
@@ -40,213 +39,259 @@ def generate_torch_data(B, L, P, VAR=1e-3, requires_grad=False):
     return M, F
 
 
-def generate_jax_data(B, L, P, VAR=1e-3, key=None):
+def generate_jax_data(B, L, P, dtype=jnp.bfloat16, VAR=1e-3, key=None):
     if key is None:
         key = jax.random.PRNGKey(0)
-    key_M, key_F = jax.random.split(key)
-    M = (
-        jax.random.normal(
-            key_M,
-            (
-                B,
-                4 * P,
-            ),
-            dtype=jnp.bfloat16,
-        )
-        * VAR
-    )
-    F = jax.random.normal(key_F, (B, L, 2 * P, 2), dtype=jnp.bfloat16) * VAR
+    k1, k2 = jax.random.split(key)
+    M = jax.random.normal(k1, (B, 4 * P), dtype=dtype) * VAR
+    F = jax.random.normal(k2, (B, L, 2 * P, 2), dtype=dtype) * VAR
     F = F[..., 0] + 1j * F[..., 1]
     return M, F
 
 
-def benchmark_config(B, L, P, TILE_L, n_warmup, n_repeat):
-    results = {}
-
-    jax_key_seed = 0
-    torch.manual_seed(0)
-
-    # Torch Forward
-    torch_times_fwd = []
+def benchmark_callable(name, func, data_gen, n_warmup, n_repeat, sync_type="torch"):
+    """Utility to benchmark a callable."""
+    # Warmup
     for _ in range(n_warmup):
-        M, F = generate_torch_data(B, L, P)
-        _ = ParallelScanFunction.apply(M, F, TILE_L)
+        args = data_gen()
+        out = func(*args)
+        if sync_type == "jax":
+            jax.tree_util.tree_map(lambda x: x.block_until_ready(), out)
+
+    if sync_type == "torch" and torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+    times = []
     for _ in range(n_repeat):
-        M, F = generate_torch_data(B, L, P)
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
+        args = data_gen()
+        if sync_type == "torch" and torch.cuda.is_available():
+            torch.cuda.synchronize()
+
         t0 = time.time()
-        _ = ParallelScanFunction.apply(M, F, TILE_L)
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        torch_times_fwd.append(time.time() - t0)
-    results["torch_fwd"] = sum(torch_times_fwd) / n_repeat
+        out = func(*args)
 
-    print(f"\tTorch forward:          {results['torch_fwd'] * 1000:.2f} ms")
+        if sync_type == "torch" and torch.cuda.is_available():
+            torch.cuda.synchronize()
+        elif sync_type == "jax":
+            jax.tree_util.tree_map(lambda x: x.block_until_ready(), out)
 
-    # Torch Forward+Backward
-    torch_times_fwbw = []
-    tOM, tOF = None, None
-    for _ in range(n_warmup):
-        M, F = generate_torch_data(B, L, P, requires_grad=True)
-        OM, OF = ParallelScanFunction.apply(M, F, TILE_L)
-        tOM, tOF = OM.detach().clone(), OF.detach().clone()
-        loss = OM.sum() + OF.sum()
-        loss.backward()
-    for _ in range(n_repeat):
-        M, F = generate_torch_data(B, L, P, requires_grad=True)
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        t0 = time.time()
-        OM, OF = ParallelScanFunction.apply(M, F, TILE_L)
-        loss = OM.sum() + OF.sum()
-        loss.backward()
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        torch_times_fwbw.append(time.time() - t0)
-    results["torch_fwdbwd"] = sum(torch_times_fwbw) / n_repeat
+        times.append(time.time() - t0)
 
-    print(f"\tTorch forward+backward: {results['torch_fwdbwd'] * 1000:.2f} ms")
+    avg_time = sum(times) / n_repeat
+    print(f"\t{name}: {avg_time * 1000:.2f} ms")
+    return avg_time
 
-    # Torch Forward (torch.compile)
-    def _torch_compile_fwd(M, F):
+
+def check_correctness(
+    B, L, P, TILE_L, torch_dtype=torch.bfloat16, jax_dtype=jnp.bfloat16
+):
+    print(f"\n  Checking correctness (dtype={torch_dtype})...")
+    torch.manual_seed(42)
+    M_torch, F_torch = generate_torch_data(B, L, P, dtype=torch_dtype, VAR=1e-3)
+    M_jax, F_jax = generate_jax_data(
+        B, L, P, dtype=jax_dtype, VAR=1e-3, key=jax.random.PRNGKey(42)
+    )
+
+    # 1. Triton
+    OM_triton, OF_triton = ParallelScanFunction.apply(
+        M_torch.clone(), F_torch.clone(), TILE_L
+    )
+
+    # 2. Torch Compile
+    def _scan(m, f):
         return torch_associative_scan(
             torch_binary_operator,
-            (M.unsqueeze(1).expand(B, L, 4 * P), F),
+            (m.unsqueeze(1).expand(B, L, 4 * P), f),
             reverse=False,
-            axis=0,
+            axis=1,
         )
 
-    torch_compile_fwd = torch.compile(_torch_compile_fwd)
+    compile_scan = torch.compile(_scan)
+    OM_comp, OF_comp = compile_scan(M_torch.clone(), F_torch.clone())
 
-    torch_times_fwd = []
-    for _ in range(n_warmup):
-        M, F = generate_torch_data(B, L, P)
-        tcOM, tcOF = torch_compile_fwd(M, F)
-        print("OM diff", ((tOM - tcOM).mean() / tOM.mean()).cpu())
-        print("OF Diff", ((tOF - tcOF).mean() / tOF.mean()).cpu())
-    for _ in range(n_repeat):
-        M, F = generate_torch_data(B, L, P)
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        t0 = time.time()
-        _ = torch_compile_fwd(M, F)
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        torch_times_fwd.append(time.time() - t0)
-    results["torch_compile_fwd"] = sum(torch_times_fwd) / n_repeat
+    # 3. JAX
+    @jax.vmap
+    def jax_scan(m, f):
+        return jax.lax.associative_scan(binary_operator, (m * jnp.ones((L, 4 * P)), f))
 
-    print(
-        f"\tTorch (torch.compile) forward: {results['torch_compile_fwd'] * 1000:.2f} ms"
+    OM_jax, OF_jax = jax_scan(M_jax, F_jax)
+
+    # Comparison
+    OM_t_np = OM_triton.detach().cpu().float().numpy()
+    OF_t_np = OF_triton.detach().cpu().float().numpy()
+    OM_c_np = OM_comp.detach().cpu().float().numpy()
+    OF_c_np = OF_comp.detach().cpu().float().numpy()
+    OM_j_np = np.array(OM_jax, dtype=np.float32)
+    OF_j_np = np.stack([OF_jax.real, OF_jax.imag], axis=-1).astype(np.float32)
+
+    diffs = {
+        "Triton vs JAX": (
+            np.abs(OM_t_np - OM_j_np).max(),
+            np.abs(OF_t_np - OF_j_np).max(),
+        ),
+        "Compile vs JAX": (
+            np.abs(OM_c_np - OM_j_np).max(),
+            np.abs(OF_c_np - OF_j_np).max(),
+        ),
+        "Triton vs Compile": (
+            np.abs(OM_t_np - OM_c_np).max(),
+            np.abs(OF_t_np - OF_c_np).max(),
+        ),
+    }
+
+    for k, (dm, df) in diffs.items():
+        print(f"  {k}: OM diff = {dm:.6e}, OF diff = {df:.6e}")
+
+    tol = 1e-2 if torch_dtype == torch.bfloat16 else 1e-5
+    if any(d > tol for pair in diffs.values() for d in pair):
+        raise ValueError("Mismatch found exceeding tolerance!")
+
+    print("  ✓ Correctness passed\n")
+    return True
+
+
+def benchmark_config(
+    B,
+    L,
+    P,
+    TILE_L,
+    n_warmup,
+    n_repeat,
+    torch_dtype=torch.bfloat16,
+    jax_dtype=jnp.bfloat16,
+):
+    if not check_correctness(B, L, P, TILE_L, torch_dtype, jax_dtype):
+        return {}
+
+    results = {}
+
+    # --- Torch ---
+    torch_gen = partial(generate_torch_data, B, L, P, dtype=torch_dtype)
+    torch_gen_grad = partial(
+        generate_torch_data, B, L, P, dtype=torch_dtype, requires_grad=True
     )
 
-    # Torch Forward+Backward (torch.compile)
-    torch_times_fwbw = []
-    for _ in range(n_warmup):
-        M, F = generate_torch_data(B, L, P, requires_grad=True)
-        OM, OF = torch_compile_fwd(M, F)
-        loss = OM.sum() + OF.sum()
-        loss.backward()
-    for _ in range(n_repeat):
-        M, F = generate_torch_data(B, L, P, requires_grad=True)
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        t0 = time.time()
-        OM, OF = torch_compile_fwd(M, F)
-        loss = OM.sum() + OF.sum()
-        loss.backward()
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        torch_times_fwbw.append(time.time() - t0)
-    results["torch_compile_fwdbwd"] = sum(torch_times_fwbw) / n_repeat
-
-    print(
-        f"\tTorch (torch.compile) forward+backward: {results['torch_compile_fwdbwd'] * 1000:.2f} ms"
+    results["torch_fwd"] = benchmark_callable(
+        "Torch forward",
+        lambda m, f: ParallelScanFunction.apply(m, f, TILE_L),
+        torch_gen,
+        n_warmup,
+        n_repeat,
+        "torch",
     )
 
-    # JAX wrappers
+    def torch_fwdbwd(m, f):
+        om, of = ParallelScanFunction.apply(m, f, TILE_L)
+        (om.sum() + of.sum()).backward()
+        return om, of
+
+    results["torch_fwdbwd"] = benchmark_callable(
+        "Torch fwd+bwd", torch_fwdbwd, torch_gen_grad, n_warmup, n_repeat, "torch"
+    )
+
+    # --- Torch Compile ---
+    def _scan_impl(m, f):
+        return torch_associative_scan(
+            torch_binary_operator,
+            (m.unsqueeze(1).expand(B, L, 4 * P), f),
+            reverse=False,
+            axis=1,
+        )
+
+    compiled_scan = torch.compile(_scan_impl)
+
+    results["torch_compile_fwd"] = benchmark_callable(
+        "Compile forward", compiled_scan, torch_gen, n_warmup, n_repeat, "torch"
+    )
+
+    def comp_fwdbwd(m, f):
+        om, of = compiled_scan(m, f)
+        (om.sum() + of.sum()).backward()
+        return om, of
+
+    results["torch_compile_fwdbwd"] = benchmark_callable(
+        "Compile fwd+bwd", comp_fwdbwd, torch_gen_grad, n_warmup, n_repeat, "torch"
+    )
+
+    # --- JAX ---
+    key = jax.random.PRNGKey(0)
+
+    def jax_gen():
+        nonlocal key
+        key, k = jax.random.split(key)
+        return generate_jax_data(B, L, P, dtype=jax_dtype, key=k)
+
     @jax.jit
     @jax.vmap
-    def jax_forward(jM, jF):
-        return jax.lax.associative_scan(
-            binary_operator, (jM * jnp.ones((L, 4 * P)), jF)
-        )
+    def jax_scan(m, f):
+        return jax.lax.associative_scan(binary_operator, (m * jnp.ones((L, 4 * P)), f))
+
+    results["jax_fwd"] = benchmark_callable(
+        "JAX forward", jax_scan, jax_gen, n_warmup, n_repeat, "jax"
+    )
 
     @jax.jit
-    def jax_loss(jM, jF):
-        jOM, jOF = jax_forward(jM, jF)
-        return jOM.sum() + jOF.real.sum() + jOF.imag.sum()
+    def jax_loss(m, f):
+        om, of = jax_scan(m, f)
+        return om.sum() + of.real.sum() + of.imag.sum()
 
     grad_func = jax.jit(jax.grad(jax_loss, argnums=(0, 1)))
 
-    # JAX Forward
-    jax_times_fwd = []
-    key = jax.random.PRNGKey(jax_key_seed)
-    for _ in range(n_warmup):
-        key, subkey = jax.random.split(key)
-        jM, jF = generate_jax_data(B, L, P, key=subkey)
-        jOM, jOF = jax_forward(jM, jF)
-        jOM.block_until_ready()
-        jOF.block_until_ready()
-    for _ in range(n_repeat):
-        key, subkey = jax.random.split(key)
-        jM, jF = generate_jax_data(B, L, P, key=subkey)
-        t0 = time.time()
-        jOM, jOF = jax_forward(jM, jF)
-        jOM.block_until_ready()
-        jOF.block_until_ready()
-        jax_times_fwd.append(time.time() - t0)
-    results["jax_fwd"] = sum(jax_times_fwd) / n_repeat
-
-    print(f"\tJax forward:          {results['jax_fwd'] * 1000:.2f} ms")
-
-    # JAX Forward+Backward
-    jax_times_fwbw = []
-    key = jax.random.PRNGKey(jax_key_seed + 42)
-    for _ in range(n_warmup):
-        key, subkey = jax.random.split(key)
-        jM, jF = generate_jax_data(B, L, P, key=subkey)
-        jgM, jgF = grad_func(jM, jF)
-        jgM.block_until_ready()
-        jgF.block_until_ready()
-    for _ in range(n_repeat):
-        key, subkey = jax.random.split(key)
-        jM, jF = generate_jax_data(B, L, P, key=subkey)
-        t0 = time.time()
-        jgM, jgF = grad_func(jM, jF)
-        jgM.block_until_ready()
-        jgF.block_until_ready()
-        jax_times_fwbw.append(time.time() - t0)
-    results["jax_fwdbwd"] = sum(jax_times_fwbw) / n_repeat
-
-    print(f"\tJax forward+backward: {results['jax_fwdbwd'] * 1000:.2f} ms")
+    results["jax_fwdbwd"] = benchmark_callable(
+        "JAX fwd+bwd", grad_func, jax_gen, n_warmup, n_repeat, "jax"
+    )
 
     return results
 
 
-def run_benchmarks(configs, n_warmup=3, n_repeat=10):
+def run_benchmarks(configs, n_warmup=3, n_repeat=10, dtypes=None):
+    if dtypes is None:
+        dtypes = [(torch.bfloat16, jnp.bfloat16)]
+
     rows = []
-    for cfg in configs:
-        L, P, TILE_L = cfg
-        B = max(2**20 // (L * P), 1)
-        print(f"Benchmarking: B={B}, L={L}, P={P}, TILE_L={TILE_L}")
-        res = benchmark_config(B, L, P, TILE_L, n_warmup, n_repeat)
-        row = {
-            "B": B,
-            "L": L,
-            "P": P,
-            "TILE_L": TILE_L,
-            "torch_fwd": res["torch_fwd"],
-            "torch_compile_fwd": res["torch_compile_fwd"],
-            "jax_fwd": res["jax_fwd"],
-            "torch_fwdbwd": res["torch_fwdbwd"],
-            "torch_compile_fwdbwd": res["torch_compile_fwdbwd"],
-            "jax_fwdbwd": res["jax_fwdbwd"],
-            "fwd_speedup": res["jax_fwd"] / res["torch_fwd"],
-            "fwdbwd_speedup": res["jax_fwdbwd"] / res["torch_fwdbwd"],
-        }
-        rows.append(row)
-    df = pd.DataFrame(rows)
-    return df
+    for t_dtype, j_dtype in dtypes:
+        for cfg in configs:
+            L, P, TILE_L = cfg
+            B = max(2**20 // (L * P), 1)
+            print(
+                f"Benchmarking: B={B}, L={L}, P={P}, TILE_L={TILE_L}, dtype={t_dtype}"
+            )
+
+            try:
+                res = benchmark_config(
+                    B, L, P, TILE_L, n_warmup, n_repeat, t_dtype, j_dtype
+                )
+                row = {
+                    "B": B,
+                    "L": L,
+                    "P": P,
+                    "TILE_L": TILE_L,
+                    "dtype": str(t_dtype),
+                    **res,
+                    "fwd_speedup": res["jax_fwd"] / res["torch_fwd"],
+                    "fwdbwd_speedup": res["jax_fwdbwd"] / res["torch_fwdbwd"],
+                }
+                rows.append(row)
+            except Exception as e:
+                print(f"Failed: {e}")
+
+    return pd.DataFrame(rows)
 
 
 if __name__ == "__main__":
     L_vals = [2**p for p in range(12, 17, 2)]
     P_vals = [2**p for p in range(6, 9, 2)]
     TILE_L_vals = [2**p for p in range(7, 9)]
-    configs = [cfg for cfg in itertools.product(L_vals, P_vals, TILE_L_vals)][:1]
-    print(f"Running benchmarks for {len(configs)} configurations...")
-    df = run_benchmarks(configs, n_warmup=2, n_repeat=5)
+    configs = list(itertools.product(L_vals, P_vals, TILE_L_vals))[:1]
+
+    # Example of running with multiple dtypes
+    dtypes_to_test = [
+        (torch.bfloat16, jnp.bfloat16),
+        (torch.float32, jnp.float32),  # Uncomment to test float32
+    ]
+
+    print(
+        f"Running benchmarks for {len(configs)} configs x {len(dtypes_to_test)} dtypes..."
+    )
+    df = run_benchmarks(configs, n_warmup=2, n_repeat=5, dtypes=dtypes_to_test)
     print(df)
