@@ -7,7 +7,10 @@ import math
 from typing import Tuple
 
 try:
-    from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction, TRITON_AVAILABLE
+    from src.damped_linoss.parallel_scan.torch_interface import (
+        ParallelScanFunction,
+        TRITON_AVAILABLE,
+    )
 except ImportError:
     TRITON_AVAILABLE = False
     ParallelScanFunction = None
@@ -510,9 +513,9 @@ class LinOSS(nn.Module):
         hidden_dim,
         output_dim,
         num_blocks,
-        classification,
-        tanh_output,
-        output_step,
+        classification=False,
+        tanh_output=False,
+        output_step=1,
         r_min=0.9,
         r_max=1.0,
         theta_max=math.pi,

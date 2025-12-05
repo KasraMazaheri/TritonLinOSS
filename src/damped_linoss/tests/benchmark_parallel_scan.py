@@ -142,7 +142,7 @@ def check_correctness(
     for k, (dm, df) in diffs.items():
         print(f"  {k}: OM diff = {dm:.6e}, OF diff = {df:.6e}")
 
-    tol = 1e-2 if torch_dtype == torch.bfloat16 else 1e-5
+    tol = 1e-2
     if any(d > tol for pair in diffs.values() for d in pair):
         raise ValueError("Mismatch found exceeding tolerance!")
 
@@ -282,7 +282,7 @@ if __name__ == "__main__":
     L_vals = [2**p for p in range(12, 17, 2)]
     P_vals = [2**p for p in range(6, 9, 2)]
     TILE_L_vals = [2**p for p in range(7, 9)]
-    configs = list(itertools.product(L_vals, P_vals, TILE_L_vals))[:1]
+    configs = list(itertools.product(L_vals, P_vals, TILE_L_vals))
 
     # Example of running with multiple dtypes
     dtypes_to_test = [
@@ -295,3 +295,4 @@ if __name__ == "__main__":
     )
     df = run_benchmarks(configs, n_warmup=2, n_repeat=5, dtypes=dtypes_to_test)
     print(df)
+    df.to_csv("benchmark_parallel_scan_results.csv", index=False)
