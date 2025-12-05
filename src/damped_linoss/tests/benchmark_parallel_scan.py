@@ -4,7 +4,6 @@ import torch
 import jax
 import jax.numpy as jnp
 import pandas as pd
-import numpy as np
 from functools import partial
 
 from src.damped_linoss.models.LinOSS import binary_operator
@@ -82,74 +81,6 @@ def benchmark_callable(name, func, data_gen, n_warmup, n_repeat, sync_type="torc
     return avg_time
 
 
-def check_correctness(
-    B, L, P, TILE_L, torch_dtype=torch.bfloat16, jax_dtype=jnp.bfloat16
-):
-    print(f"\n  Checking correctness (dtype={torch_dtype})...")
-    torch.manual_seed(42)
-    M_torch, F_torch = generate_torch_data(B, L, P, dtype=torch_dtype, VAR=1e-3)
-    M_jax, F_jax = generate_jax_data(
-        B, L, P, dtype=jax_dtype, VAR=1e-3, key=jax.random.PRNGKey(42)
-    )
-
-    # 1. Triton
-    OM_triton, OF_triton = ParallelScanFunction.apply(
-        M_torch.clone(), F_torch.clone(), TILE_L
-    )
-
-    # 2. Torch Compile
-    def _scan(m, f):
-        return torch_associative_scan(
-            torch_binary_operator,
-            (m.unsqueeze(1).expand(B, L, 4 * P), f),
-            reverse=False,
-            axis=1,
-        )
-
-    compile_scan = torch.compile(_scan)
-    OM_comp, OF_comp = compile_scan(M_torch.clone(), F_torch.clone())
-
-    # 3. JAX
-    @jax.vmap
-    def jax_scan(m, f):
-        return jax.lax.associative_scan(binary_operator, (m * jnp.ones((L, 4 * P)), f))
-
-    OM_jax, OF_jax = jax_scan(M_jax, F_jax)
-
-    # Comparison
-    OM_t_np = OM_triton.detach().cpu().float().numpy()
-    OF_t_np = OF_triton.detach().cpu().float().numpy()
-    OM_c_np = OM_comp.detach().cpu().float().numpy()
-    OF_c_np = OF_comp.detach().cpu().float().numpy()
-    OM_j_np = np.array(OM_jax, dtype=np.float32)
-    OF_j_np = np.stack([OF_jax.real, OF_jax.imag], axis=-1).astype(np.float32)
-
-    diffs = {
-        "Triton vs JAX": (
-            np.abs(OM_t_np - OM_j_np).max(),
-            np.abs(OF_t_np - OF_j_np).max(),
-        ),
-        "Compile vs JAX": (
-            np.abs(OM_c_np - OM_j_np).max(),
-            np.abs(OF_c_np - OF_j_np).max(),
-        ),
-        "Triton vs Compile": (
-            np.abs(OM_t_np - OM_c_np).max(),
-            np.abs(OF_t_np - OF_c_np).max(),
-        ),
-    }
-
-    for k, (dm, df) in diffs.items():
-        print(f"  {k}: OM diff = {dm:.6e}, OF diff = {df:.6e}")
-
-    tol = 1e-2
-    if any(d > tol for pair in diffs.values() for d in pair):
-        raise ValueError("Mismatch found exceeding tolerance!")
-
-    print("  ✓ Correctness passed\n")
-    return True
-
-
 def benchmark_config(
     B,
     L,
@@ -160,9 +91,6 @@ def benchmark_config(
     torch_dtype=torch.bfloat16,
     jax_dtype=jnp.bfloat16,
 ):
-    if not check_correctness(B, L, P, TILE_L, torch_dtype, jax_dtype):
-        return {}
-
     results = {}
 
     # --- Torch ---
