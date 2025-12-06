@@ -1,4 +1,5 @@
 import abc
+import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -79,18 +80,54 @@ class GLU(nn.Module):
 
 
 class _AbstractLinOSSLayer(nn.Module):
-    def __init__(self):
+    def __init__(self, use_triton=None):
         super().__init__()
-        self.use_triton = TRITON_AVAILABLE and torch.cuda.is_available()
+        self.use_triton = use_triton
 
     @abc.abstractmethod
     def _recurrence(self):
         raise NotImplementedError
 
+    def _should_use_triton(self, tensor):
+        """Determine whether to use Triton backend based on override flag and tensor device."""
+        if self.use_triton is None:
+            # Auto: use Triton if available and tensor is on CUDA
+            use_triton = TRITON_AVAILABLE and tensor.is_cuda
+
+            # Warn if CUDA is available but Triton is not
+            if tensor.is_cuda and not TRITON_AVAILABLE:
+                warnings.warn(
+                    "Running on CUDA but Triton is not available. "
+                    "Performance may be suboptimal. "
+                    "Install Triton with 'pip install damped-linoss[cuda]' for better performance.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+
+            # Warn if Triton is available but tensor is not on CUDA
+            if TRITON_AVAILABLE and not tensor.is_cuda:
+                warnings.warn(
+                    "Triton is available but tensor is not on CUDA. "
+                    "Falling back to PyTorch native backend. "
+                    "Move tensors to CUDA for better performance.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+
+            return use_triton
+        else:
+            # Manual override
+            if self.use_triton and not TRITON_AVAILABLE:
+                raise RuntimeError(
+                    "Triton backend requested but not available. "
+                    "Install with 'pip install damped-linoss[cuda]'."
+                )
+            return self.use_triton
+
 
 class IMLayer(_AbstractLinOSSLayer):
-    def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max):
-        super().__init__()
+    def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max, use_triton=None):
+        super().__init__(use_triton)
 
         # Initialize parameters
         self.steps = nn.Parameter(torch.empty(state_dim))
@@ -158,7 +195,7 @@ class IMLayer(_AbstractLinOSSLayer):
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
         P = A_diag.shape[0]
 
-        if self.use_triton:
+        if self._should_use_triton(input_sequence):
             _, xs = ParallelScanFunction.apply(M_elements, F)
         else:
             if input_sequence.dim() == 3:
@@ -198,8 +235,8 @@ class IMLayer(_AbstractLinOSSLayer):
 
 
 class IMEXLayer(_AbstractLinOSSLayer):
-    def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max):
-        super().__init__()
+    def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max, use_triton=None):
+        super().__init__(use_triton)
 
         # Initialize parameters
         self.steps = nn.Parameter(torch.empty(state_dim))
@@ -264,7 +301,7 @@ class IMEXLayer(_AbstractLinOSSLayer):
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
         P = A_diag.shape[0]
 
-        if self.use_triton:
+        if self._should_use_triton(input_sequence):
             _, xs = ParallelScanFunction.apply(M_elements, F)
         else:
             if input_sequence.dim() == 3:
@@ -407,7 +444,7 @@ class DampedLayer(_AbstractLinOSSLayer):
         # M_elements: (..., 4*P), F: (..., L, 2*P, 2)
         P = A_diag.shape[0]
 
-        if self.use_triton:
+        if self._should_use_triton(input_sequence):
             _, xs = ParallelScanFunction.apply(M_elements, F)
         else:
             if input_sequence.dim() == 3:
