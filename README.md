@@ -4,34 +4,48 @@ This repository implements a torch-based implementation of Damped Linear Oscilla
 
 ---
 
-## Requirements
-
 This repository is implemented in python 3.10 and uses Jax and PyTorch as the machine learning framework, with Triton as the backend for the custom parallel scan used in the PyTorch implementation.
 
 ## PyTorch Implementation
 
 The PyTorch-based implementation of D-LinOSS can be found at `src/damped_linoss/models/TorchLinOSS.py`. This implementation is functionally equivalent to `src/damped_linoss/models/LinOSS.py` as is verified by the test suits.
 
-### Environment
+## Installation
 
-This project uses `uv` as the Python package manager and environment tool.
+### Option 1: With CUDA/Triton support
 
-Installation:
+```bash
+pip install -e ".[cuda]"
 ```
-curl -Ls https://astral.sh/uv/install.sh | sh
+
+### Option 2: CPU-only or without Triton
+
+If CUDA is not available (works with torch.compile):
+
+```bash
+pip install -e .
+```
+
+### Development Installation (with tests)
+
+```bash
+pip install -e ".[dev]"
 ```
 
 Configuring the TritonLinOSS environment:
-```
+
+```bash
 cd TritonLinOSS/
 uv sync
 ```
+
 This will create a virtual environment in `TritonLinOSS/.venv`.
 
-Use `uv run` instead of `python` when running scripts.
+### original JAX implementation
 
-If running `scripts/process_uea.py` throws this error: No module named 'packaging'
-Then run: `uv pip install packaging`
+```bash
+pip install -e ".[jax]"
+```
 
 ---
 
