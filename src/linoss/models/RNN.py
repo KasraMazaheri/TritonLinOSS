@@ -4,11 +4,12 @@ import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx
 
-from damped_linoss.models.common import GLU
+from .common import GLU
 
 
 class _AbstractRNNCell(eqx.Module):
     """Abstract RNN Cell class."""
+
     cell: eqx.Module
 
     @abc.abstractmethod
@@ -79,7 +80,7 @@ class BasicRNN(eqx.Module):
         tanh_output,
         output_step,
         *,
-        key
+        key,
     ):
         input_key, cell_key, output_key = jr.split(key, 3)
         cell_map = {
@@ -87,15 +88,9 @@ class BasicRNN(eqx.Module):
             "GRU": GRUCell,
         }
 
-        self.linear_encoder = eqx.nn.Linear(
-            input_dim, hidden_dim, key=input_key
-        )
-        self.cell = cell_map[cell_name](
-            hidden_dim, state_dim, key=cell_key
-        )
-        self.linear_decoder = eqx.nn.Linear(
-            state_dim, output_dim, key=output_key
-        )
+        self.linear_encoder = eqx.nn.Linear(input_dim, hidden_dim, key=input_key)
+        self.cell = cell_map[cell_name](hidden_dim, state_dim, key=cell_key)
+        self.linear_decoder = eqx.nn.Linear(state_dim, output_dim, key=output_key)
 
         self.classification = classification
         self.tanh_output = tanh_output
@@ -125,18 +120,13 @@ class RNNBlock(eqx.Module):
     glu: GLU
     drop: eqx.nn.Dropout
 
-    def __init__(
-        self, 
-        cell_type, 
-        state_dim, 
-        hidden_dim, 
-        drop_rate, 
-        *, 
-        key
-    ):
+    def __init__(self, cell_type, state_dim, hidden_dim, drop_rate, *, key):
         cellkey, glukey = jr.split(key, 2)
         self.norm = eqx.nn.BatchNorm(
-            input_size=hidden_dim, axis_name="batch", channelwise_affine=False, mode="batch"
+            input_size=hidden_dim,
+            axis_name="batch",
+            channelwise_affine=False,
+            mode="batch",
         )
         self.cell = cell_type(hidden_dim, state_dim, key=cellkey)
         self.glu = GLU(state_dim, hidden_dim, key=glukey)
@@ -161,6 +151,7 @@ class StackedRNN(eqx.Module):
     """
     Multi-layer deep RNN with GLU activation, skip connections, and dropout.
     """
+
     linear_encoder: eqx.nn.Linear
     blocks: list[RNNBlock]
     linear_decoder: eqx.nn.Linear
@@ -184,7 +175,7 @@ class StackedRNN(eqx.Module):
         output_step,
         drop_rate=0.1,
         *,
-        key
+        key,
     ):
         cell_map = {
             "LSTM": LSTMCell,
@@ -192,8 +183,12 @@ class StackedRNN(eqx.Module):
         }
         cell_type = cell_map[cell_name]
 
-        linear_encoder_key, *block_keys, linear_decoder_key = jr.split(key, num_blocks + 2)
-        self.linear_encoder = eqx.nn.Linear(input_dim, hidden_dim, key=linear_encoder_key)
+        linear_encoder_key, *block_keys, linear_decoder_key = jr.split(
+            key, num_blocks + 2
+        )
+        self.linear_encoder = eqx.nn.Linear(
+            input_dim, hidden_dim, key=linear_encoder_key
+        )
         self.blocks = [
             RNNBlock(cell_type, state_dim, hidden_dim, drop_rate, key=key)
             for key in block_keys

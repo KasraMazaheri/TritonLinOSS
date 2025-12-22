@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch.nn.init as init
 import math
 
-from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
+from ..parallel_scan.torch_interface import ParallelScanFunction
 
 
 class GLU(nn.Module):

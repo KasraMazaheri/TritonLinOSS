@@ -17,12 +17,13 @@ The module also includes the following classes and functions:
 - `binary_operator_diag`: A helper function used in the associative scan operation within `LRULayer` to process diagonal
                           elements.
 """
+
 import jax
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
-from damped_linoss.models.common import GLU
+from .common import GLU
 
 
 def binary_operator_diag(element_i, element_j):
@@ -52,10 +53,18 @@ class LRULayer(eqx.Module):
         self.theta_log = jnp.log(theta_max * u2)
 
         # Glorot initialized Input/Output projection matrices
-        self.B_re = jr.normal(B_re_key, shape=(state_dim, hidden_dim)) / jnp.sqrt(2 * hidden_dim)
-        self.B_im = jr.normal(B_im_key, shape=(state_dim, hidden_dim)) / jnp.sqrt(2 * hidden_dim)
-        self.C_re = jr.normal(C_re_key, shape=(hidden_dim, state_dim)) / jnp.sqrt(state_dim)
-        self.C_im = jr.normal(C_im_key, shape=(hidden_dim, state_dim)) / jnp.sqrt(state_dim)
+        self.B_re = jr.normal(B_re_key, shape=(state_dim, hidden_dim)) / jnp.sqrt(
+            2 * hidden_dim
+        )
+        self.B_im = jr.normal(B_im_key, shape=(state_dim, hidden_dim)) / jnp.sqrt(
+            2 * hidden_dim
+        )
+        self.C_re = jr.normal(C_re_key, shape=(hidden_dim, state_dim)) / jnp.sqrt(
+            state_dim
+        )
+        self.C_im = jr.normal(C_im_key, shape=(hidden_dim, state_dim)) / jnp.sqrt(
+            state_dim
+        )
         self.D = jr.normal(D_key, shape=(hidden_dim,))
 
         # Normalization factor
@@ -87,10 +96,15 @@ class LRUBlock(eqx.Module):
     glu: GLU
     drop: eqx.nn.Dropout
 
-    def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max, drop_rate, *, key):
+    def __init__(
+        self, state_dim, hidden_dim, r_min, r_max, theta_max, drop_rate, *, key
+    ):
         lrukey, glukey = jr.split(key, 2)
         self.norm = eqx.nn.BatchNorm(
-            input_size=hidden_dim, axis_name="batch", channelwise_affine=False, mode="batch"
+            input_size=hidden_dim,
+            axis_name="batch",
+            channelwise_affine=False,
+            mode="batch",
         )
         self.lru = LRULayer(state_dim, hidden_dim, r_min, r_max, theta_max, key=lrukey)
         self.glu = GLU(hidden_dim, hidden_dim, key=glukey)
@@ -142,12 +156,16 @@ class LRU(eqx.Module):
         linear_encoder_key, *block_keys, linear_decoder_key = jr.split(
             key, num_blocks + 2
         )
-        self.linear_encoder = eqx.nn.Linear(input_dim, hidden_dim, key=linear_encoder_key)
+        self.linear_encoder = eqx.nn.Linear(
+            input_dim, hidden_dim, key=linear_encoder_key
+        )
         self.blocks = [
             LRUBlock(state_dim, hidden_dim, r_min, r_max, theta_max, drop_rate, key=key)
             for key in block_keys
         ]
-        self.linear_decoder = eqx.nn.Linear(hidden_dim, output_dim, key=linear_decoder_key)
+        self.linear_decoder = eqx.nn.Linear(
+            hidden_dim, output_dim, key=linear_decoder_key
+        )
         self.classification = classification
         self.tanh_output = tanh_output
         self.output_step = output_step
@@ -170,4 +188,3 @@ class LRU(eqx.Module):
                 x = jax.nn.tanh(x)
 
         return x, state
-    

@@ -17,6 +17,7 @@ The module also includes:
 - Utility functions for initialising and discretising the state space model components,
   such as `make_HiPPO`, `make_NPLR_HiPPO`, and `make_DPLR_HiPPO`.
 """
+
 from typing import List
 
 import equinox as eqx
@@ -26,7 +27,7 @@ import jax.random as jr
 from jax.nn.initializers import lecun_normal, normal
 from jax.scipy.linalg import block_diag
 
-from damped_linoss.models.common import GLU
+from .common import GLU
 
 
 def make_HiPPO(N):
@@ -292,7 +293,6 @@ class S5Layer(eqx.Module):
         *,
         key,
     ):
-
         B_key, C_key, D_key, step_key, key = jr.split(key, 5)
 
         block_size = int(state_dim / ssm_blocks)
@@ -410,7 +410,10 @@ class S5Block(eqx.Module):
     ):
         ssmkey, glukey = jr.split(key, 2)
         self.norm = eqx.nn.BatchNorm(
-            input_size=hidden_dim, axis_name="batch", channelwise_affine=False, mode="batch"
+            input_size=hidden_dim,
+            axis_name="batch",
+            channelwise_affine=False,
+            mode="batch",
         )
         self.ssm = S5Layer(
             state_dim,
@@ -476,11 +479,12 @@ class S5(eqx.Module):
         *,
         key,
     ):
-
         linear_encoder_key, *block_keys, linear_decoder_key = jr.split(
             key, num_blocks + 2
         )
-        self.linear_encoder = eqx.nn.Linear(input_dim, hidden_dim, key=linear_encoder_key)
+        self.linear_encoder = eqx.nn.Linear(
+            input_dim, hidden_dim, key=linear_encoder_key
+        )
         self.blocks = [
             S5Block(
                 state_dim,
@@ -498,7 +502,9 @@ class S5(eqx.Module):
             )
             for key in block_keys
         ]
-        self.linear_decoder = eqx.nn.Linear(hidden_dim, output_dim, key=linear_decoder_key)
+        self.linear_decoder = eqx.nn.Linear(
+            hidden_dim, output_dim, key=linear_decoder_key
+        )
         self.classification = classification
         self.linear_output = tanh_output
         self.output_step = output_step

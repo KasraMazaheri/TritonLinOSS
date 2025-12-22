@@ -7,7 +7,11 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.nn
 
-from damped_linoss.data.dataloader import BaseDataloader, StandardDataloader, BucketedDataloader
+from .dataloader import (
+    BaseDataloader,
+    StandardDataloader,
+    BucketedDataloader,
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -65,12 +69,8 @@ def shuffle(
     else:
         full_data = train_data + val_data + test_data
         shuffled_data = [full_data[i] for i in idxs.tolist()]
-    if isinstance(train_labels, jnp.ndarray) or isinstance(
-        train_labels, np.ndarray
-    ):
-        full_labels = jnp.concatenate(
-            (train_labels, val_labels, test_labels), axis=0
-        )
+    if isinstance(train_labels, jnp.ndarray) or isinstance(train_labels, np.ndarray):
+        full_labels = jnp.concatenate((train_labels, val_labels, test_labels), axis=0)
         shuffled_labels = full_labels[idxs]
     else:
         full_labels = train_labels + val_labels + test_labels
@@ -119,7 +119,9 @@ def append_time(data: tuple, time_duration: float) -> tuple:
     return (train_data, val_data, test_data)
 
 
-def calculate_dimension(data: tuple, labels: tuple, classification: bool) -> tuple[int, int]:
+def calculate_dimension(
+    data: tuple, labels: tuple, classification: bool
+) -> tuple[int, int]:
     train_data, _, _ = data
     train_labels, _, _ = labels
 
@@ -164,7 +166,10 @@ class Dataset:
         (train_labels, val_labels, test_labels) = labels
 
         train_loader = dataloader_type(
-            train_data, train_labels, self.in_memory, self.data_out_func,
+            train_data,
+            train_labels,
+            self.in_memory,
+            self.data_out_func,
         )
         val_loader = dataloader_type(
             val_data, val_labels, self.in_memory, self.data_out_func
@@ -178,7 +183,7 @@ class Dataset:
             "val": val_loader,
             "test": test_loader,
         }
-    
+
 
 # =============================================
 # SECTION: Dataset-specific generators
@@ -269,7 +274,9 @@ def load_Cifar10_dataset():
     try:
         import torchvision
     except:
-        raise RuntimeError("Must have torch/torchvision installed to load Cifar10 dataset.")
+        raise RuntimeError(
+            "Must have torch/torchvision installed to load Cifar10 dataset."
+        )
 
     # Load CIFAR-10
     download_dir = BASE_DIR / "data" / "raw" / "cifar"
@@ -323,7 +330,9 @@ def load_NoisyCifar10_dataset():
     try:
         import torchvision
     except:
-        raise RuntimeError("Must have torch/torchvision installed to load NoisyCifar10 dataset.")
+        raise RuntimeError(
+            "Must have torch/torchvision installed to load NoisyCifar10 dataset."
+        )
 
     # Load CIFAR-10
     download_dir = BASE_DIR / "data" / "raw" / "cifar"
@@ -468,9 +477,7 @@ def load_IMDb_dataset():
     train_data = convert_tokens(train_data)
     test_data = convert_tokens(test_data)
 
-    train_labels = jax.nn.one_hot(
-        np.array(train_labels), num_classes=num_class
-    )
+    train_labels = jax.nn.one_hot(np.array(train_labels), num_classes=num_class)
     test_labels = jax.nn.one_hot(np.array(test_labels), num_classes=num_class)
 
     # No validation provided: train = test = 25000
@@ -495,7 +502,9 @@ def load_MNIST_dataset():
     try:
         import torchvision
     except:
-        raise RuntimeError("Must have torch/torchvision installed to load MNIST dataset.")
+        raise RuntimeError(
+            "Must have torch/torchvision installed to load MNIST dataset."
+        )
 
     download_dir = BASE_DIR / "data" / "raw" / "mnist"
     dataset_train = torchvision.datasets.MNIST(
@@ -532,20 +541,22 @@ def load_MNIST_dataset():
     test_data = (test_data - mean) / std
     test_labels = jax.nn.one_hot(jnp.array(test_labels), num_classes)
 
-    bounds = [0.9] 
+    bounds = [0.9]
     (train_data, val_data) = split(train_data, bounds)
     (train_labels, val_labels) = split(train_labels, bounds)
     data = (train_data, val_data, test_data)
     labels = (train_labels, val_labels, test_labels)
 
     return data, labels, lambda x: x
-    
+
 
 def load_sMNIST_dataset():
     try:
         import torchvision
     except:
-        raise RuntimeError("Must have torch/torchvision installed to load sMNIST dataset.")
+        raise RuntimeError(
+            "Must have torch/torchvision installed to load sMNIST dataset."
+        )
 
     download_dir = BASE_DIR / "data" / "raw" / "mnist"
     dataset_train = torchvision.datasets.MNIST(
@@ -565,7 +576,7 @@ def load_sMNIST_dataset():
     for image, label in dataset_train:
         train_data.append(np.array(image))
         train_labels.append(np.array(label))
-    train_data = jnp.array(train_data).reshape(len(train_data), 28*28, data_dim)
+    train_data = jnp.array(train_data).reshape(len(train_data), 28 * 28, data_dim)
     train_labels = jax.nn.one_hot(jnp.array(train_labels), num_classes)
 
     # Normalize
@@ -578,11 +589,11 @@ def load_sMNIST_dataset():
     for image, label in dataset_test:
         test_data.append(np.array(image))
         test_labels.append(np.array(label))
-    test_data = jnp.array(test_data).reshape(len(test_data), 28*28, data_dim)
+    test_data = jnp.array(test_data).reshape(len(test_data), 28 * 28, data_dim)
     test_data = (test_data - mean) / std
     test_labels = jax.nn.one_hot(jnp.array(test_labels), num_classes)
 
-    bounds = [0.9] 
+    bounds = [0.9]
     (train_data, val_data) = split(train_data, bounds)
     (train_labels, val_labels) = split(train_labels, bounds)
     data = (train_data, val_data, test_data)
@@ -613,11 +624,13 @@ def load_Adding_dataset():
         half = sql // 2
         half_1 = jr.randint(key2, (bsz,), 0, half)
         half_2 = jr.randint(key3, (bsz,), half, sql)
+
         def set_indices(idx1, idx2):
             arr = jnp.zeros((sql,))
             arr = arr.at[idx1].set(1)
             arr = arr.at[idx2].set(1)
             return arr
+
         indices_1d = jax.vmap(set_indices)(half_1, half_2)
         indices = jnp.expand_dims(indices_1d, axis=-1)  # shape: (bsz, sql, 1)
         data = jnp.concatenate((values, indices), axis=2)

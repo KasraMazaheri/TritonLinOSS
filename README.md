@@ -12,6 +12,11 @@ This repository is implemented in python 3.10 and uses Jax and PyTorch as the ma
 
 The PyTorch-based implementation of D-LinOSS can be found at `src/damped_linoss/models/TorchLinOSS.py`. This implementation is functionally equivalent to `src/damped_linoss/models/LinOSS.py` as is verified by the test suits.
 
+
+## Installation
+
+
+
 ### Environment
 
 This project uses `uv` as the Python package manager and environment tool.
@@ -22,10 +27,12 @@ curl -Ls https://astral.sh/uv/install.sh | sh
 ```
 
 Configuring the TritonLinOSS environment:
+
 ```
 cd TritonLinOSS/
 uv sync
 ```
+
 This will create a virtual environment in `TritonLinOSS/.venv`.
 
 Use `uv run` instead of `python` when running scripts.

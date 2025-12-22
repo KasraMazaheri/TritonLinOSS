@@ -4,8 +4,8 @@ import jax
 import torch
 import numpy as np
 import equinox as eqx
-from src.damped_linoss.models.LinOSS import LinOSS as LinOSSJax
-from src.damped_linoss.models.TorchLinOSS import LinOSS as LinOSSTorch
+from linoss.models.LinOSS import LinOSS as LinOSSJax
+from linoss.models.TorchLinOSS import LinOSS as LinOSSTorch
 from jax.tree_util import SequenceKey, DictKey, GetAttrKey, FlattenedIndexKey
 
 from typing import Tuple

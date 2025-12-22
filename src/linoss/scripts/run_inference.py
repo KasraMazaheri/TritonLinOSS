@@ -146,7 +146,7 @@ def run_inference(
 
         print(f"Inference time: {total_time:.4f} seconds")
         print(f"Average time per sample: {total_time / len(inputs):.6f} seconds")
-        print(f"MSE: {np.mean((outputs - truth)**2)}")
+        print(f"MSE: {np.mean((outputs - truth) ** 2)}")
 
         # Only save original data
         if dataset_args["time_duration"] is not None:

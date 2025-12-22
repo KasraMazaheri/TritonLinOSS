@@ -6,7 +6,7 @@ from jax import nn
 from jax.nn.initializers import normal
 import equinox as eqx
 
-from src.damped_linoss.models.common import GLU, simple_uniform_init
+from .common import GLU, simple_uniform_init
 
 
 # Parallel scan operations
@@ -53,7 +53,7 @@ class _AbstractLinOSSLayer(eqx.Module):
     @abc.abstractmethod
     def _recurrence(self):
         raise NotImplementedError
-    
+
 
 class IMLayer(_AbstractLinOSSLayer):
     A_diag: jax.Array
@@ -111,7 +111,7 @@ class IMLayer(_AbstractLinOSSLayer):
         B_complex = self.B[..., 0] + 1j * self.B[..., 1]
         C_complex = self.C[..., 0] + 1j * self.C[..., 1]
         A_diag = nn.relu(self.A_diag)
-            
+
         ys = self._recurrence(A_diag, B_complex, input_sequence, steps)
 
         # Apply SSM Output Operations Cx + Du
@@ -177,7 +177,7 @@ class IMEXLayer(_AbstractLinOSSLayer):
         B_complex = self.B[..., 0] + 1j * self.B[..., 1]
         C_complex = self.C[..., 0] + 1j * self.C[..., 1]
         A_diag = nn.relu(self.A_diag)
-            
+
         ys = self._recurrence(A_diag, B_complex, input_sequence, steps)
 
         # Apply SSM Output Operations Cx + Du
@@ -203,8 +203,7 @@ class DampedLayer(_AbstractLinOSSLayer):
         steps = nn.sigmoid(self.steps)
 
         mags = jnp.sqrt(
-            jr.uniform(G_key, shape=(state_dim,)) * (r_max**2 - r_min**2)
-            + r_min**2
+            jr.uniform(G_key, shape=(state_dim,)) * (r_max**2 - r_min**2) + r_min**2
         )
         self.G_diag = (1 - mags**2) / (steps * mags**2)
         G_diag = nn.relu(self.G_diag)
@@ -339,7 +338,10 @@ class LinOSSBlock(eqx.Module):
             raise KeyError(f"Layer name {layer_name} not defined.")
 
         self.norm = eqx.nn.BatchNorm(
-            input_size=hidden_dim, axis_name="batch", channelwise_affine=False, mode="batch"
+            input_size=hidden_dim,
+            axis_name="batch",
+            channelwise_affine=False,
+            mode="batch",
         )
         self.layer = layer_map[layer_name](
             state_dim,
@@ -398,7 +400,9 @@ class LinOSS(eqx.Module):
         linear_encoder_key, *block_keys, linear_decoder_key = jr.split(
             key, num_blocks + 2
         )
-        self.linear_encoder = eqx.nn.Linear(input_dim, hidden_dim, key=linear_encoder_key)
+        self.linear_encoder = eqx.nn.Linear(
+            input_dim, hidden_dim, key=linear_encoder_key
+        )
         self.blocks = [
             LinOSSBlock(
                 layer_name,
@@ -412,7 +416,9 @@ class LinOSS(eqx.Module):
             )
             for key in block_keys
         ]
-        self.linear_decoder = eqx.nn.Linear(hidden_dim, output_dim, key=linear_decoder_key)
+        self.linear_decoder = eqx.nn.Linear(
+            hidden_dim, output_dim, key=linear_decoder_key
+        )
 
         self.classification = classification
         self.tanh_output = tanh_output
@@ -436,4 +442,3 @@ class LinOSS(eqx.Module):
                 x = jax.nn.tanh(x)
 
         return x, state
-    
