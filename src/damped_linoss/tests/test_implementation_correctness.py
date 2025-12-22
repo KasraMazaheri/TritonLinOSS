@@ -3,12 +3,12 @@ import torch
 import jax
 import jax.numpy as jnp
 import numpy as np
-from src.damped_linoss.models.LinOSS import binary_operator
-from src.damped_linoss.models.TorchLinOSS import (
+from ..models.LinOSS import binary_operator
+from ..models.TorchLinOSS import (
     binary_operator as torch_binary_operator,
 )
-from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
-from src.damped_linoss.parallel_scan.torch_associative_scan import (
+from ..parallel_scan.torch_interface import ParallelScanFunction
+from ..parallel_scan.torch_associative_scan import (
     associative_scan as torch_associative_scan,
 )
 

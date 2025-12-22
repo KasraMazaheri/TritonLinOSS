@@ -2,9 +2,8 @@ import pytest
 import torch
 import jax
 import jax.numpy as jnp
-from linoss.models.LinOSS import binary_operator
-from linoss.parallel_scan.torch_interface import ParallelScanFunction
-
+from ..models.LinOSS import binary_operator
+from ..parallel_scan.torch_interface import ParallelScanFunction
 
 
 def generate_random_torch_tensors(B, L, P, variance=1e-3, requires_grad=False):

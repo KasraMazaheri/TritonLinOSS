@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Simple script to verify the installation of damped-linoss.
+Simple script to verify the installation of linoss.
 Run this after installation to check which backend is being used.
 """
 
@@ -10,7 +10,7 @@ import damped_linoss
 
 def main():
     print("=" * 60)
-    print("Damped-LinOSS Installation Verification")
+    print("LinOSS Installation Verification")
     print("=" * 60)
     print(f"Package version: {damped_linoss.__version__}")
     print(f"PyTorch version: {torch.__version__}")
@@ -62,7 +62,7 @@ def main():
         with torch.no_grad():
             output = model(x)
 
-        print(f"✓ Forward pass successful")
+        print("✓ Forward pass successful")
         print(f"  Input shape: {x.shape}")
         print(f"  Output shape: {output.shape}")
 

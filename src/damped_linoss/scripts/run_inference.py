@@ -25,11 +25,11 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
+from ..models.create_model import create_model
+from ..data.create_dataset import create_dataset
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
-
-from linoss.models.create_model import create_model
-from linoss.data.create_dataset import create_dataset
 
 
 def load_pickle(filename):

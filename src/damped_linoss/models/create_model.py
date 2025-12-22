@@ -1,10 +1,10 @@
 import jax
 import equinox as eqx
 
-from linoss.models.RNN import BasicRNN, StackedRNN
-from linoss.models.S5 import S5
-from linoss.models.LRU import LRU
-from linoss.models.LinOSS import LinOSS
+from .RNN import BasicRNN, StackedRNN
+from .S5 import S5
+from .LRU import LRU
+from .LinOSS import LinOSS
 
 
 def safe_load(data, key, dtype=None):

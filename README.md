@@ -13,7 +13,7 @@ The PyTorch-based implementation of D-LinOSS can be found at `src/damped_linoss/
 ## Install
 
 ```bash
-pip install "linoss[cuda] @ git+https://github.com/KasraMazaheri/TritonLinOSS"
+pip install "damped-linoss[cuda] @ git+https://github.com/KasraMazaheri/TritonLinOSS"
 ```
 
 or using `uv`:

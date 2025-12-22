@@ -7,7 +7,7 @@ import numpy as np
 import jax.random as jr
 import jax
 import torch
-from linoss.tests.utils import compute_differences, create_model_pair
+from utils import compute_differences, create_model_pair
 
 
 SEED = 42

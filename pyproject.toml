@@ -22,7 +22,7 @@ jax = [
 ]
 dev = [
     "pytest>=8.0.0",
-    "linoss[cuda,jax]",
+    "damped-linoss[cuda,jax]",
 ]
 
 [build-system]

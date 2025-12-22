@@ -5,9 +5,10 @@ import torch
 import equinox as eqx
 import functools as ft
 from typing import Tuple
-from linoss.models.LinOSS import LinOSS as LinOSSJax
-from linoss.models.TorchLinOSS import LinOSS as LinOSSTorch
-from linoss.utils.from_jax import from_jax_to_torch
+
+from ..models.LinOSS import LinOSS as LinOSSJax
+from ..models.TorchLinOSS import LinOSS as LinOSSTorch
+from ..utils.from_jax import from_jax_to_torch
 
 
 def compute_differences(orig_out, trit_out):
