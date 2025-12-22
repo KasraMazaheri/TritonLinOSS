@@ -2,9 +2,13 @@ import pytest
 import torch
 import jax
 import jax.numpy as jnp
-from linoss.models.LinOSS import binary_operator
-from linoss.parallel_scan.torch_interface import ParallelScanFunction
-
+from src.damped_linoss.models.LinOSS import binary_operator
+from src.damped_linoss.models.TorchLinOSS import (
+    binary_operator as torch_binary_operator,
+)
+from src.damped_linoss.parallel_scan.torch_associative_scan import (
+    associative_scan as torch_associative_scan,
+)
 
 
 def generate_random_torch_tensors(B, L, P, variance=1e-3, requires_grad=False):
@@ -49,7 +53,12 @@ def test_parallel_scan_fwd_bwd(B, L, P):
 
     M, F = generate_random_torch_tensors(B, L, P, requires_grad=True)
 
-    torch_output_M, torch_output_F = ParallelScanFunction.apply(M, F)
+    # Expand M to match the expected input shape for torch_associative_scan
+    M_expanded = M.unsqueeze(1).expand(B, L, 4 * P)
+
+    torch_output_M, torch_output_F = torch_associative_scan(
+        torch_binary_operator, (M_expanded, F), reverse=False, axis=1
+    )
     torch_output_M.retain_grad()
     torch_output_F.retain_grad()
     loss = torch_output_M.sum() + torch_output_F[..., 0].sum()

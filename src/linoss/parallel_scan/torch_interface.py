@@ -28,7 +28,6 @@ class ParallelScanFunction(torch.autograd.Function):
                 "Triton is not available. Install with 'pip install damped-linoss[cuda]' "
                 "or use the torch-compiled version instead."
             )
-
         if M.ndim == 1:  # Unbatched
             assert F.ndim == 3
             M = M.unsqueeze(0)

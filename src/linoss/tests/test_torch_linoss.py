@@ -31,6 +31,7 @@ SEED = 42
     ],
     ids=["relaxed", "strict"],
 )
+@pytest.mark.parametrize("device", ["cuda", "cpu"])
 def test_initialization_fwd(
     layer_name: str,
     batch_size: int,
@@ -42,10 +43,11 @@ def test_initialization_fwd(
     max_atol: float,
     mean_atol: float,
     rel_tol: float,
+    device: str,
 ):
     """ """
     key = jr.PRNGKey(SEED)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = device
     data_key, model_key, state_key = jr.split(key, 3)
     test_data_jax = jr.normal(data_key, (batch_size, seq_length, input_dim))
     test_data_torch = torch.tensor(np.array(test_data_jax), dtype=torch.float32).to(

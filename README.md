@@ -4,41 +4,71 @@ This repository implements a torch-based implementation of Damped Linear Oscilla
 
 ---
 
-## Requirements
-
 This repository is implemented in python 3.10 and uses Jax and PyTorch as the machine learning framework, with Triton as the backend for the custom parallel scan used in the PyTorch implementation.
 
 ## PyTorch Implementation
 
 The PyTorch-based implementation of D-LinOSS can be found at `src/damped_linoss/models/TorchLinOSS.py`. This implementation is functionally equivalent to `src/damped_linoss/models/LinOSS.py` as is verified by the test suits.
 
+## Install
 
-## Installation
-
-
-
-### Environment
-
-This project uses `uv` as the Python package manager and environment tool.
-
-Installation:
-```
-curl -Ls https://astral.sh/uv/install.sh | sh
+```bash
+pip install "linoss[cuda] @ git+https://github.com/KasraMazaheri/TritonLinOSS"
 ```
 
-Configuring the TritonLinOSS environment:
+or using `uv`:
 
+```bash
+uv add git+https://github.com/KasraMazaheri/TritonLinOSS --extra cuda
 ```
+
+## Local installation
+
+### Step 1: Clone the repository
+
+```bash
+git clone https://github.com/KasraMazaheri/TritonLinOSS
+cd TritonLinOSS
+```
+
+### Step 2: install dependencies
+
+#### Option 1: With CUDA/Triton support
+
+```bash
+pip install -e ".[cuda]"
+```
+
+#### Option 2: CPU-only or without Triton
+
+If CUDA is not available (works with torch.compile). We don't recommend using this for training/production as it is significantly slower. It is intended to be used mainly for testing and development.
+
+```bash
+pip install -e .
+```
+
+#### Option 3: Development Installation (with tests, requires CUDA)
+
+```bash
+pip install -e ".[dev]"
+```
+
+#### Option 4: using `uv`
+
+Configuring the TritonLinOSS environment using `uv` (recommended):
+
+```bash
 cd TritonLinOSS/
 uv sync
 ```
 
-This will create a virtual environment in `TritonLinOSS/.venv`.
+add flags `--extra cuda` or `--extra dev` to include CUDA or `dev` dependencies respectively.
 
-Use `uv run` instead of `python` when running scripts.
+### original JAX implementation
 
-If running `scripts/process_uea.py` throws this error: No module named 'packaging'
-Then run: `uv pip install packaging`
+```bash
+pip install -e ".[jax]"
+```
 
 ---
 
