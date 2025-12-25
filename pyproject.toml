@@ -17,8 +17,7 @@ cuda = ["triton>=3.0.0"]
 jax = [
     "equinox>=0.13.0",
     "jax[cuda12]>=0.6.2",
-    "triton>=3.4.0",
-    "jax_triton>=0.3.0",
+    "optax>=0.2.5",
 ]
 dev = [
     "pytest>=8.0.0",
