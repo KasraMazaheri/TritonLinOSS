@@ -17,7 +17,7 @@ except ImportError:
 
 class ParallelScanFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, M, F, TILE_L=64):
+    def forward(ctx, M, F, TILE_L=None):
         """
         The forward pass is identical to your original wrapper function.
         We save the inputs and outputs for the backward pass.
@@ -34,6 +34,8 @@ class ParallelScanFunction(torch.autograd.Function):
             F = F.unsqueeze(0)
 
         B, L = F.shape[:2]
+        if TILE_L is None:
+            TILE_L = 128 if L <= 128 else 256
         P = F.shape[2] // 2
         assert M.shape == (B, 4 * P)
         assert F.shape == (B, L, 2 * P, 2)
