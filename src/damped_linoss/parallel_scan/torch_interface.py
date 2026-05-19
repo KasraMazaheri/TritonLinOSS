@@ -35,7 +35,7 @@ class ParallelScanFunction(torch.autograd.Function):
 
         B, L = F.shape[:2]
         if TILE_L is None:
-            TILE_L = 128 if L <= 128 else 512
+            TILE_L = 128 if L <= 128 else 256 if L < 512 else 512
         elif TILE_L > 512:
             raise ValueError("TILE_L must be <= 512 for the Triton scan kernels.")
         P = F.shape[2] // 2

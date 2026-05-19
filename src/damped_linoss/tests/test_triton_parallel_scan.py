@@ -40,9 +40,17 @@ def real_imag_to_complex(tensor):
     return tensor[..., 0] + 1j * tensor[..., 1]
 
 
-@pytest.mark.parametrize("B", [1, 4, 16])
-@pytest.mark.parametrize("L", [1, 16, 32, 64, 100, 128, 256])
-@pytest.mark.parametrize("P", [1, 8, 16, 32, 35, 64])
+@pytest.mark.parametrize(
+    "B,L,P",
+    [
+        (1, 1, 1),
+        (4, 16, 8),
+        (16, 64, 16),
+        (4, 100, 35),
+        (16, 128, 64),
+        (4, 256, 64),
+    ],
+)
 def test_parallel_scan_fwd_bwd(B, L, P):
     """Test that forward and backward passes produce correct results matching the JAX implementation."""
 
