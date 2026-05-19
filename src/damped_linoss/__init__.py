@@ -13,6 +13,9 @@ __all__ = [
     "IMLayer",
     "IMEXLayer",
     "DampedLayer",
+    "LinOSSSequenceMixer",
+    "LinOSSBackboneBlock",
+    "LinOSSBackbone",
     "TRITON_AVAILABLE",
 ]
 
@@ -25,7 +28,16 @@ def __getattr__(name):
             TRITON_AVAILABLE = False
         return TRITON_AVAILABLE
 
-    if name in {"LinOSS", "LinOSSBlock", "IMLayer", "IMEXLayer", "DampedLayer"}:
+    if name in {
+        "LinOSS",
+        "LinOSSBlock",
+        "IMLayer",
+        "IMEXLayer",
+        "DampedLayer",
+        "LinOSSSequenceMixer",
+        "LinOSSBackboneBlock",
+        "LinOSSBackbone",
+    }:
         from .models import TorchLinOSS
 
         return getattr(TorchLinOSS, name)

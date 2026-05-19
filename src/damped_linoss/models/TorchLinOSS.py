@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 import math
-from typing import Tuple
+from typing import Literal, Tuple
 
 try:
     from damped_linoss.parallel_scan.torch_interface import (
@@ -20,6 +20,9 @@ from damped_linoss.parallel_scan.torch_associative_scan import associative_scan
 
 
 SCAN_TYPE = Tuple[torch.Tensor, torch.Tensor]
+DISCRETIZATION = Literal["IM", "IMEX", "IMEX2", "IMEX3", "EX"]
+INITIALIZATION = Literal["AG", "RT"]
+STABILITY = Literal["oscillatory", "stable"]
 
 
 def binary_operator(q_i: SCAN_TYPE, q_j: SCAN_TYPE) -> SCAN_TYPE:
@@ -118,6 +121,352 @@ class _AbstractLinOSSLayer(nn.Module):
                     "Move the model and inputs to CUDA or set use_triton=False."
                 )
             return self.use_triton
+
+
+def _uniform_parameter(shape, half_width, *, device=None, dtype=torch.float32):
+    parameter = nn.Parameter(torch.empty(shape, device=device, dtype=dtype))
+    init.uniform_(parameter, -half_width, half_width)
+    return parameter
+
+
+def _normal_parameter(shape, std, *, device=None, dtype=torch.float32):
+    parameter = nn.Parameter(torch.empty(shape, device=device, dtype=dtype))
+    init.normal_(parameter, std=std)
+    return parameter
+
+
+def _mat_im(A, G, step):
+    S = 1 + step * G + step**2 * A
+    return 1 / S, -step * A / S, step / S, (1 + step * G) / S, step / S, step**2 / S
+
+
+def _mat_imex(A, G, step):
+    S = 1 + step * G
+    return 1 / S, -step * A / S, step / S, 1 - step**2 * A / S, step / S, step**2 / S
+
+
+def _mat_imex2(A, G, step):
+    return 1 - step * G, -step * A, step * (1 - step * G), 1 - step**2 * A, step, step**2
+
+
+def _mat_imex3(A, G, step):
+    S = 1 + step**2 * A
+    return (
+        (1 - step * G) / S,
+        -step * A / S,
+        step * (1 - step * G) / S,
+        1 / S,
+        step / S,
+        step**2 / S,
+    )
+
+
+def _mat_ex(A, G, step):
+    return 1 - step * G, -step * A, step, torch.ones_like(A), step, torch.zeros_like(A)
+
+
+MATRIX_FNS = {
+    "IM": _mat_im,
+    "IMEX": _mat_imex,
+    "IMEX2": _mat_imex2,
+    "IMEX3": _mat_imex3,
+    "EX": _mat_ex,
+}
+
+
+def _rt_to_ag(discretization, trace, determinant, step):
+    if discretization == "IM":
+        A = (determinant - trace + 1) / (determinant * step**2)
+        G = (-2 * determinant + trace) / (determinant * step)
+    elif discretization == "IMEX":
+        A = (determinant - trace + 1) / (determinant * step**2)
+        G = (1 - determinant) / (determinant * step)
+    elif discretization == "IMEX2":
+        A = (determinant - trace + 1) / step**2
+        G = (1 - determinant) / step
+    elif discretization == "IMEX3":
+        denom = determinant - trace
+        A = (-determinant + trace - 1) / (step**2 * denom)
+        G = (2 * determinant - trace) / (step * denom)
+    elif discretization == "EX":
+        A = (determinant - trace + 1) / step**2
+        G = (2 - trace) / step
+    else:
+        raise ValueError(f"Unknown discretization {discretization!r}")
+    return A, G
+
+
+def _project_ag_oscillatory(discretization, A_diag, G_diag, steps, eps=0.0):
+    h = steps
+    h2 = torch.clamp(steps**2, min=1e-6)
+
+    if discretization == "IM":
+        A_low_1 = -G_diag / h
+        A_low_2 = G_diag**2 / 4
+        A_diag = torch.maximum(torch.maximum(A_diag, A_low_1), A_low_2)
+    elif discretization == "IMEX":
+        G_diag = F.relu(G_diag)
+        A_low = (2 + h * G_diag - 2 * torch.sqrt(1 + h * G_diag)) / h2
+        A_high = (2 + h * G_diag + 2 * torch.sqrt(1 + h * G_diag)) / h2
+        A_diag = torch.clamp(A_diag, min=A_low * (1 + eps), max=A_high * (1 - eps))
+    elif discretization == "IMEX2":
+        G_diag = torch.minimum(F.relu(G_diag), (1 / h) * (1 - eps))
+        A_low = (2 - h * G_diag - 2 * torch.sqrt(1 - h * G_diag)) / h2
+        A_high = (2 - h * G_diag + 2 * torch.sqrt(1 - h * G_diag)) / h2
+        A_diag = torch.clamp(A_diag, min=A_low * (1 + eps), max=A_high * (1 - eps))
+    elif discretization == "IMEX3":
+        G_diag = torch.minimum(F.relu(G_diag), (1 / h) * (1 - eps))
+        A_low = G_diag**2 / torch.clamp(4 * (1 - h * G_diag), min=1e-6)
+        A_diag = A_low * (1 + eps) + F.relu(A_diag - A_low * (1 + eps))
+    elif discretization == "EX":
+        G_diag = torch.minimum(F.relu(G_diag), (4 / h) * (1 - eps))
+        A_low = 0.25 * G_diag**2
+        A_high = G_diag / h
+        A_diag = torch.clamp(A_diag, min=A_low * (1 + eps), max=A_high * (1 - eps))
+    else:
+        raise ValueError(f"Unknown discretization {discretization!r}")
+
+    return A_diag, G_diag
+
+
+def _project_ag_stability(discretization, A_diag, G_diag, steps, eps=0.0):
+    h = steps
+    h2 = torch.clamp(steps**2, min=1e-6)
+
+    if discretization == "IM":
+        A_low_1 = -G_diag / h
+        A_low_2 = -(2 * h * G_diag + 4) / h2
+        A_diag = torch.maximum(torch.maximum(torch.maximum(A_diag, A_low_1), A_low_2), torch.zeros_like(A_diag))
+    elif discretization == "IMEX":
+        G_diag = F.relu(G_diag)
+        A_high = (4 + 2 * h * G_diag) / h2
+        A_diag = torch.minimum(F.relu(A_diag), A_high * (1 - eps))
+    elif discretization == "IMEX2":
+        G_diag = torch.minimum(F.relu(G_diag), (2 / h) * (1 - eps))
+        A_high = (4 - 2 * h * G_diag) / h2
+        A_diag = torch.minimum(F.relu(A_diag), A_high * (1 - eps))
+    elif discretization == "IMEX3":
+        A_low_1 = (2 * h * G_diag - 4) / h2
+        A_low_2 = -G_diag / h
+        A_diag = torch.maximum(torch.maximum(torch.maximum(A_diag, A_low_1), A_low_2), torch.zeros_like(A_diag))
+    elif discretization == "EX":
+        G_diag = torch.minimum(F.relu(G_diag), (4 / h) * (1 - eps))
+        A_low = F.relu((2 * h * G_diag - 4) / h2)
+        A_high = G_diag / h
+        A_diag = torch.clamp(A_diag, min=A_low * (1 + eps), max=A_high * (1 - eps))
+    else:
+        raise ValueError(f"Unknown discretization {discretization!r}")
+
+    return A_diag, G_diag
+
+
+def _lambda_sq(discretization, A, G, step):
+    m11, m12, m21, m22, _, _ = MATRIX_FNS[discretization](A, G, step)
+    return m11 * m22 - m12 * m21
+
+
+class LinOSSSequenceMixer(_AbstractLinOSSLayer):
+    """Unified Discretax-style LinOSS layer with optional Triton scan backend."""
+
+    def __init__(
+        self,
+        in_features,
+        state_dim=64,
+        discretization: DISCRETIZATION = "IMEX",
+        initialization: INITIALIZATION = "AG",
+        damping=True,
+        stability: STABILITY = "oscillatory",
+        projection_eps=0.0,
+        input_normalization=False,
+        r_min=0.9,
+        r_max=1.0,
+        theta_max=math.pi / 4,
+        num_heads=1,
+        use_head_gating=False,
+        use_head_output_projection=False,
+        A_max=1.0,
+        G_max=1.0,
+        use_triton=None,
+        dtype=torch.float32,
+        device=None,
+    ):
+        super().__init__(use_triton)
+        if discretization not in MATRIX_FNS:
+            raise ValueError(f"Unknown discretization {discretization!r}")
+        if initialization not in {"AG", "RT"}:
+            raise ValueError(f"Unknown initialization {initialization!r}")
+        if stability not in {"oscillatory", "stable"}:
+            raise ValueError(f"Unknown stability {stability!r}")
+        if num_heads <= 0:
+            raise ValueError("num_heads must be positive")
+        if in_features % num_heads != 0:
+            raise ValueError(f"in_features={in_features} must be divisible by num_heads={num_heads}")
+        if state_dim % num_heads != 0:
+            raise ValueError(f"state_dim={state_dim} must be divisible by num_heads={num_heads}")
+        if input_normalization and not damping:
+            raise ValueError("input_normalization requires damping=True.")
+
+        self.in_features = in_features
+        self.state_dim = state_dim
+        self.discretization = discretization
+        self.initialization = initialization
+        self.damping = damping
+        self.stability = stability
+        self.projection_eps = projection_eps
+        self.input_normalization = input_normalization
+        self.num_heads = num_heads
+        self.head_hidden_dim = in_features // num_heads
+        self.head_state_dim = state_dim // num_heads
+        self.use_head_gating = use_head_gating and num_heads > 1
+        self.use_head_output_projection = use_head_output_projection and num_heads > 1
+
+        factory = {"device": device, "dtype": dtype}
+        A_flat, G_flat, steps_flat = self._init_recurrence_parameters(
+            state_dim, discretization, initialization, damping, r_min, r_max, theta_max, A_max, G_max, **factory
+        )
+        self.A_diag = nn.Parameter(A_flat.reshape(num_heads, self.head_state_dim))
+        self.G_diag = nn.Parameter(G_flat.reshape(num_heads, self.head_state_dim))
+        self.steps = nn.Parameter(steps_flat.reshape(num_heads, self.head_state_dim))
+
+        self.B = _uniform_parameter(
+            (num_heads, self.head_state_dim, self.head_hidden_dim, 2),
+            1.0 / math.sqrt(self.head_hidden_dim),
+            **factory,
+        )
+        self.C = _uniform_parameter(
+            (num_heads, self.head_hidden_dim, self.head_state_dim, 2),
+            1.0 / math.sqrt(self.head_state_dim),
+            **factory,
+        )
+        self.D = _normal_parameter((num_heads, self.head_hidden_dim), 1.0, **factory)
+
+        gamma_log = torch.zeros(state_dim, **factory)
+        if input_normalization:
+            with torch.no_grad():
+                steps = torch.sigmoid(steps_flat)
+                projector = _project_ag_oscillatory if stability == "oscillatory" else _project_ag_stability
+                A_proj, G_proj = projector(discretization, A_flat, G_flat, steps, projection_eps)
+                lam_sq = _lambda_sq(discretization, A_proj, G_proj, steps)
+                gamma_log = 0.5 * torch.log(torch.clamp(1.0 - lam_sq, min=1e-6))
+        self.gamma_log = nn.Parameter(gamma_log.reshape(num_heads, self.head_state_dim))
+
+        self.head_gate = nn.Linear(in_features, num_heads, device=device, dtype=dtype) if self.use_head_gating else None
+        self.head_output_projection = (
+            nn.Linear(in_features, in_features, device=device, dtype=dtype)
+            if self.use_head_output_projection
+            else None
+        )
+
+    @staticmethod
+    def _init_recurrence_parameters(
+        state_dim,
+        discretization,
+        initialization,
+        damping,
+        r_min,
+        r_max,
+        theta_max,
+        A_max,
+        G_max,
+        *,
+        device=None,
+        dtype=torch.float32,
+    ):
+        steps = torch.empty(state_dim, device=device, dtype=dtype)
+        init.normal_(steps, std=0.5)
+
+        if not damping:
+            A_diag = torch.rand(state_dim, device=device, dtype=dtype) * A_max
+            return A_diag, torch.zeros_like(A_diag), steps
+
+        if initialization == "AG":
+            A_diag = torch.rand(state_dim, device=device, dtype=dtype) * A_max
+            G_diag = torch.rand(state_dim, device=device, dtype=dtype) * G_max
+            return A_diag, G_diag, steps
+
+        step_sigmoid = torch.sigmoid(steps)
+        mag = torch.sqrt(torch.rand(state_dim, device=device, dtype=dtype) * (r_max**2 - r_min**2) + r_min**2)
+        arg = torch.rand(state_dim, device=device, dtype=dtype) * theta_max
+        trace = 2 * mag * torch.cos(arg)
+        determinant = mag**2
+        A_diag, G_diag = _rt_to_ag(discretization, trace, determinant, step_sigmoid)
+        return A_diag.real.to(dtype=dtype), G_diag.real.to(dtype=dtype), steps
+
+    def _project_parameters(self, steps):
+        G_diag = self.G_diag if self.damping else torch.zeros_like(self.G_diag)
+        projector = _project_ag_oscillatory if self.stability == "oscillatory" else _project_ag_stability
+        return projector(self.discretization, self.A_diag, G_diag, steps, self.projection_eps)
+
+    def _scan(self, M_elements, F_elements, input_sequence):
+        if self._should_use_triton(input_sequence):
+            _, xs = ParallelScanFunction.apply(M_elements, F_elements)
+            return xs
+
+        L = F_elements.shape[1]
+        M_expanded = M_elements.unsqueeze(1).expand(-1, L, -1)
+        _, xs = associative_scan(
+            binary_operator,
+            (M_expanded, F_elements),
+            reverse=False,
+            axis=1,
+        )
+        return xs
+
+    def _apply_recurrence(self, x, steps):
+        batch_size, seq_len, _ = x.shape
+        x_heads = x.reshape(batch_size, seq_len, self.num_heads, self.head_hidden_dim)
+        x_flat = x_heads.permute(0, 2, 1, 3).reshape(batch_size * self.num_heads, seq_len, self.head_hidden_dim)
+
+        A, G = self._project_parameters(steps)
+        flat_shape = (batch_size * self.num_heads, self.head_state_dim)
+        A_flat = A.unsqueeze(0).expand(batch_size, -1, -1).reshape(flat_shape)
+        G_flat = G.unsqueeze(0).expand(batch_size, -1, -1).reshape(flat_shape)
+        step_flat = steps.unsqueeze(0).expand(batch_size, -1, -1).reshape(flat_shape)
+        gamma_flat = self.gamma_log.unsqueeze(0).expand(batch_size, -1, -1).reshape(flat_shape)
+        B_flat = (
+            self.B.unsqueeze(0)
+            .expand(batch_size, -1, -1, -1, -1)
+            .reshape(batch_size * self.num_heads, self.head_state_dim, self.head_hidden_dim, 2)
+        )
+
+        Bu = torch.einsum("nlh,npht->nlpt", x_flat, B_flat)
+        Bu = Bu * torch.exp(gamma_flat)[:, None, :, None]
+
+        M_11, M_12, M_21, M_22, f1, f2 = MATRIX_FNS[self.discretization](A_flat, G_flat, step_flat)
+        M_elements = torch.cat([M_11, M_12, M_21, M_22], dim=-1)
+        F1 = Bu * f1[:, None, :, None]
+        F2 = Bu * f2[:, None, :, None]
+        F_elements = torch.cat([F1, F2], dim=-2)
+        xs = self._scan(M_elements, F_elements, x)
+        ys = xs[..., self.head_state_dim :, :]
+        return ys.reshape(batch_size, self.num_heads, seq_len, self.head_state_dim, 2).permute(0, 2, 1, 3, 4)
+
+    def forward(self, input_sequence):
+        squeeze_batch = False
+        if input_sequence.dim() == 2:
+            input_sequence = input_sequence.unsqueeze(0)
+            squeeze_batch = True
+        elif input_sequence.dim() != 3:
+            raise ValueError("input_sequence must have shape (L, H) or (B, L, H)")
+        if input_sequence.shape[-1] != self.in_features:
+            raise ValueError(f"Expected input feature dim {self.in_features}, got {input_sequence.shape[-1]}")
+
+        steps = torch.sigmoid(self.steps)
+        ys = self._apply_recurrence(input_sequence, steps)
+        x_heads = input_sequence.reshape(input_sequence.shape[0], input_sequence.shape[1], self.num_heads, self.head_hidden_dim)
+
+        Cy_complex = torch.einsum("nlhpt,hfpt->nlhft", ys, self.C)
+        head_outputs = Cy_complex[..., 0] - Cy_complex[..., 1]
+        head_outputs = head_outputs + x_heads * self.D[None, None, :, :]
+
+        if self.head_gate is not None:
+            gate_weights = torch.softmax(self.head_gate(input_sequence), dim=-1)
+            head_outputs = head_outputs * gate_weights[..., None]
+
+        output = head_outputs.reshape(input_sequence.shape[0], input_sequence.shape[1], self.in_features)
+        if self.head_output_projection is not None:
+            output = self.head_output_projection(output)
+        return output.squeeze(0) if squeeze_batch else output
 
 
 class IMLayer(_AbstractLinOSSLayer):
@@ -546,6 +895,160 @@ class LinOSSBlock(nn.Module):
         x = self.drop(x)
         x = skip + x
 
+        return x
+
+
+class LinOSSBackboneBlock(nn.Module):
+    """Discretax-style residual block around the unified LinOSS sequence mixer."""
+
+    def __init__(
+        self,
+        hidden_dim,
+        state_dim=64,
+        num_heads=1,
+        use_head_gating=False,
+        use_head_output_projection=False,
+        discretization: DISCRETIZATION = "IMEX",
+        initialization: INITIALIZATION = "AG",
+        damping=True,
+        stability: STABILITY = "oscillatory",
+        projection_eps=0.0,
+        input_normalization=False,
+        r_min=0.9,
+        r_max=1.0,
+        theta_max=math.pi / 4,
+        A_max=1.0,
+        G_max=1.0,
+        drop_rate=0.1,
+        prenorm=True,
+        use_bias=True,
+        use_triton=None,
+        dtype=torch.float32,
+        device=None,
+    ):
+        super().__init__()
+        self.norm = nn.BatchNorm1d(hidden_dim, affine=False, device=device, dtype=dtype)
+        self.sequence_mixer = LinOSSSequenceMixer(
+            in_features=hidden_dim,
+            state_dim=state_dim,
+            num_heads=num_heads,
+            use_head_gating=use_head_gating,
+            use_head_output_projection=use_head_output_projection,
+            discretization=discretization,
+            initialization=initialization,
+            damping=damping,
+            stability=stability,
+            projection_eps=projection_eps,
+            input_normalization=input_normalization,
+            r_min=r_min,
+            r_max=r_max,
+            theta_max=theta_max,
+            A_max=A_max,
+            G_max=G_max,
+            use_triton=use_triton,
+            dtype=dtype,
+            device=device,
+        )
+        self.channel_mixer = GLU(hidden_dim, hidden_dim)
+        self.channel_mixer.to(device=device, dtype=dtype)
+        if not use_bias:
+            self.channel_mixer.w1.bias = None
+            self.channel_mixer.w2.bias = None
+        self.drop = nn.Dropout(p=drop_rate)
+        self.prenorm = prenorm
+
+    def _norm_sequence(self, x):
+        squeeze_batch = False
+        if x.dim() == 2:
+            x = x.unsqueeze(0)
+            squeeze_batch = True
+        x = self.norm(x.permute(0, 2, 1)).permute(0, 2, 1)
+        return x.squeeze(0) if squeeze_batch else x
+
+    def forward(self, x):
+        skip = x
+        if self.prenorm:
+            x = self._norm_sequence(x)
+        x = self.sequence_mixer(x)
+        x = self.drop(F.gelu(x))
+        x = self.channel_mixer(x)
+        x = self.drop(x)
+        x = skip + x
+        if not self.prenorm:
+            x = self._norm_sequence(x)
+        return x
+
+
+class LinOSSBackbone(nn.Module):
+    """Minimal multi-block PyTorch LinOSS backbone matching the Discretax model surface."""
+
+    def __init__(
+        self,
+        hidden_dim,
+        num_blocks=4,
+        state_dim=64,
+        num_heads=1,
+        use_head_gating=False,
+        use_head_output_projection=False,
+        discretization: DISCRETIZATION = "IMEX",
+        initialization: INITIALIZATION = "AG",
+        damping=True,
+        stability: STABILITY = "oscillatory",
+        projection_eps=0.0,
+        input_normalization=False,
+        r_min=0.9,
+        r_max=1.0,
+        theta_max=math.pi / 4,
+        A_max=1.0,
+        G_max=1.0,
+        drop_rate=0.1,
+        prenorm=True,
+        use_bias=True,
+        use_triton=None,
+        dtype=torch.float32,
+        device=None,
+    ):
+        super().__init__()
+        if num_heads <= 0:
+            raise ValueError("num_heads must be positive")
+        if hidden_dim % num_heads != 0:
+            raise ValueError(f"hidden_dim={hidden_dim} must be divisible by num_heads={num_heads}")
+        if state_dim % num_heads != 0:
+            raise ValueError(f"state_dim={state_dim} must be divisible by num_heads={num_heads}")
+
+        self.blocks = nn.ModuleList(
+            [
+                LinOSSBackboneBlock(
+                    hidden_dim=hidden_dim,
+                    state_dim=state_dim,
+                    num_heads=num_heads,
+                    use_head_gating=use_head_gating,
+                    use_head_output_projection=use_head_output_projection,
+                    discretization=discretization,
+                    initialization=initialization,
+                    damping=damping,
+                    stability=stability,
+                    projection_eps=projection_eps,
+                    input_normalization=input_normalization,
+                    r_min=r_min,
+                    r_max=r_max,
+                    theta_max=theta_max,
+                    A_max=A_max,
+                    G_max=G_max,
+                    drop_rate=drop_rate,
+                    prenorm=prenorm,
+                    use_bias=use_bias,
+                    use_triton=use_triton,
+                    dtype=dtype,
+                    device=device,
+                )
+                for _ in range(num_blocks)
+            ]
+        )
+
+    def forward(self, x):
+        for block in self.blocks:
+            x = block(x)
         return x
 
 
