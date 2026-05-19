@@ -80,5 +80,11 @@ def test_parallel_scan_fwd_bwd(B, L, P):
     assert jnp.allclose(jax_F_grad, torch_to_jax(F.grad), atol=1e-1)
 
 
+def test_parallel_scan_rejects_unsupported_large_tile():
+    M, F = generate_random_torch_tensors(1, 16, 1)
+    with pytest.raises(ValueError, match="TILE_L must be <= 512"):
+        ParallelScanFunction.apply(M, F, 1024)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
