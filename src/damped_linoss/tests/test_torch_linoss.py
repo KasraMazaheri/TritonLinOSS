@@ -7,7 +7,7 @@ import numpy as np
 import jax.random as jr
 import jax
 import torch
-from src.damped_linoss.tests.utils import compute_differences, create_model_pair
+from damped_linoss.tests.utils import compute_differences, create_model_pair
 
 
 SEED = 42
@@ -46,6 +46,9 @@ def test_initialization_fwd(
     device: str,
 ):
     """ """
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available to PyTorch")
+
     key = jr.PRNGKey(SEED)
     device = device
     data_key, model_key, state_key = jr.split(key, 3)

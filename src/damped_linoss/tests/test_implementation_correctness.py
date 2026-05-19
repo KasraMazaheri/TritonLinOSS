@@ -3,13 +3,18 @@ import torch
 import jax
 import jax.numpy as jnp
 import numpy as np
-from src.damped_linoss.models.LinOSS import binary_operator
-from src.damped_linoss.models.TorchLinOSS import (
+from damped_linoss.models.LinOSS import binary_operator
+from damped_linoss.models.TorchLinOSS import (
     binary_operator as torch_binary_operator,
 )
-from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
-from src.damped_linoss.parallel_scan.torch_associative_scan import (
+from damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
+from damped_linoss.parallel_scan.torch_associative_scan import (
     associative_scan as torch_associative_scan,
+)
+
+
+pytestmark = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA is not available to PyTorch"
 )
 
 
