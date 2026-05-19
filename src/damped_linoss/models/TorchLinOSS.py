@@ -8,7 +8,7 @@ import math
 from typing import Tuple
 
 try:
-    from src.damped_linoss.parallel_scan.torch_interface import (
+    from damped_linoss.parallel_scan.torch_interface import (
         ParallelScanFunction,
         TRITON_AVAILABLE,
     )
@@ -16,7 +16,7 @@ except ImportError:
     TRITON_AVAILABLE = False
     ParallelScanFunction = None
 
-from src.damped_linoss.parallel_scan.torch_associative_scan import associative_scan
+from damped_linoss.parallel_scan.torch_associative_scan import associative_scan
 
 
 SCAN_TYPE = Tuple[torch.Tensor, torch.Tensor]
@@ -104,16 +104,6 @@ class _AbstractLinOSSLayer(nn.Module):
                     stacklevel=4,
                 )
 
-            # Warn if Triton is available but tensor is not on CUDA
-            if TRITON_AVAILABLE and not tensor.is_cuda:
-                warnings.warn(
-                    "Triton is available but tensor is not on CUDA. "
-                    "Falling back to PyTorch native backend. "
-                    "Move tensors to CUDA for better performance.",
-                    UserWarning,
-                    stacklevel=4,
-                )
-
             return use_triton
         else:
             # Manual override
@@ -121,6 +111,11 @@ class _AbstractLinOSSLayer(nn.Module):
                 raise RuntimeError(
                     "Triton backend requested but not available. "
                     "Install with 'pip install damped-linoss[cuda]'."
+                )
+            if self.use_triton and not tensor.is_cuda:
+                raise RuntimeError(
+                    "Triton backend requested but input tensors are not on CUDA. "
+                    "Move the model and inputs to CUDA or set use_triton=False."
                 )
             return self.use_triton
 
@@ -341,8 +336,8 @@ class IMEXLayer(_AbstractLinOSSLayer):
 
 
 class DampedLayer(_AbstractLinOSSLayer):
-    def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max):
-        super().__init__()
+    def __init__(self, state_dim, hidden_dim, r_min, r_max, theta_max, use_triton=None):
+        super().__init__(use_triton)
 
         self.steps = nn.Parameter(torch.empty(state_dim))
         init.normal_(self.steps, std=0.5)
@@ -468,9 +463,20 @@ class DampedLayer(_AbstractLinOSSLayer):
         # input_sequence is (L, H) or (B, L, H)
         steps = torch.sigmoid(self.steps)
         G_diag = F.relu(self.G_diag)
+        A_boundary_low = (
+            2 + steps * G_diag - 2 * torch.sqrt(1 + steps * G_diag)
+        ) / steps**2
+        A_boundary_high = (
+            2 + steps * G_diag + 2 * torch.sqrt(1 + steps * G_diag)
+        ) / steps**2
+        A_diag = (
+            A_boundary_low
+            + F.relu(self.A_diag - A_boundary_low)
+            - F.relu(self.A_diag - A_boundary_high)
+        )
 
         # ys is (..., L, P, 2)
-        ys = self._recurrence(self.A_diag, G_diag, self.B, input_sequence, steps)
+        ys = self._recurrence(A_diag, G_diag, self.B, input_sequence, steps)
 
         # Apply SSM Output Operations Cx + Du
         # C is (H, P, 2)
@@ -493,6 +499,7 @@ class LinOSSBlock(nn.Module):
         r_max,
         theta_max,
         drop_rate,
+        use_triton=None,
     ):
         super().__init__()
         layer_map = {
@@ -513,6 +520,7 @@ class LinOSSBlock(nn.Module):
             r_min,
             r_max,
             theta_max,
+            use_triton=use_triton,
         )
         self.glu = GLU(hidden_dim, hidden_dim)
         self.drop = nn.Dropout(p=drop_rate)
@@ -557,6 +565,7 @@ class LinOSS(nn.Module):
         r_max=1.0,
         theta_max=math.pi,
         drop_rate=0.05,
+        use_triton=None,
         **kwargs,
     ):
         super().__init__()
@@ -572,6 +581,7 @@ class LinOSS(nn.Module):
                     r_max,
                     theta_max,
                     drop_rate,
+                    use_triton=use_triton,
                 )
                 for _ in range(num_blocks)
             ]
