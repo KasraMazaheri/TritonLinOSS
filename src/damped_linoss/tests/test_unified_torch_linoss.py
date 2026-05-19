@@ -92,6 +92,27 @@ def test_unified_layer_validates_multi_head_partitions():
         LinOSSSequenceMixer(in_features=8, state_dim=9, num_heads=2)
 
 
+def test_unified_layer_rejects_invalid_input_normalization():
+    with pytest.raises(ValueError, match="input_normalization requires damping=True"):
+        LinOSSSequenceMixer(in_features=4, state_dim=8, damping=False, input_normalization=True)
+
+
+def test_unified_layer_rejects_forced_triton_on_cpu():
+    layer = LinOSSSequenceMixer(in_features=4, state_dim=8, use_triton=True)
+    x = torch.randn(3, 4)
+
+    with pytest.raises(RuntimeError, match="input tensors are not on CUDA"):
+        layer(x)
+
+
+def test_backbone_validates_multi_head_partitions():
+    with pytest.raises(ValueError, match="hidden_dim=7 must be divisible by num_heads=2"):
+        LinOSSBackbone(hidden_dim=7, state_dim=8, num_heads=2)
+
+    with pytest.raises(ValueError, match="state_dim=9 must be divisible by num_heads=2"):
+        LinOSSBackbone(hidden_dim=8, state_dim=9, num_heads=2)
+
+
 def test_single_head_merge_flags_preserve_plain_path():
     torch.manual_seed(654)
     keyed = LinOSSSequenceMixer(
