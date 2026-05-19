@@ -131,20 +131,22 @@ class ParallelScanFunction(torch.autograd.Function):
             TILE_L=TILE_L,
         )
 
+        num_blocks_l = triton.cdiv(L, TILE_L)
         BM  = RM[:, 0::TILE_L].clone()
         gBM = gM[:, 0::TILE_L].clone()
         gBF = gF[:, 0::TILE_L].clone()
 
-        # Compute partial sums
-        grid_inter = (B, P)
-        inter_block_scan_bwd[grid_inter](
-            BM, gBM, gBF,
-            BM.shape[1],
-            BM.stride(), gBM.stride(), gBF.stride(),
-        )
+        if num_blocks_l > 1:
+            # Compute partial sums
+            grid_inter = (B, P)
+            inter_block_scan_bwd[grid_inter](
+                BM, gBM, gBF,
+                BM.shape[1],
+                BM.stride(), gBM.stride(), gBF.stride(),
+            )
 
         # Parallel scan epilogue to add partial sums to each block
-        grid_epilogue = (B, P, triton.cdiv(L, TILE_L))
+        grid_epilogue = (B, P, num_blocks_l)
         parallel_scan_epilogue_bwd[grid_epilogue](
             OM, OF,
             BM, gBM, gBF,
