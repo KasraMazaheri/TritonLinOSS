@@ -66,13 +66,13 @@ def binary_operator(q_i: SCAN_TYPE, q_j: SCAN_TYPE) -> SCAN_TYPE:
 
 
 class GLU(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, input_dim, output_dim, bias=True):
         """
         Initializes the Gated Linear Unit (GLU) module.
         """
         super().__init__()
-        self.w1 = nn.Linear(input_dim, output_dim, bias=True)
-        self.w2 = nn.Linear(input_dim, output_dim, bias=True)
+        self.w1 = nn.Linear(input_dim, output_dim, bias=bias)
+        self.w2 = nn.Linear(input_dim, output_dim, bias=bias)
 
     def forward(self, x):
         """
@@ -949,11 +949,8 @@ class LinOSSBackboneBlock(nn.Module):
             dtype=dtype,
             device=device,
         )
-        self.channel_mixer = GLU(hidden_dim, hidden_dim)
+        self.channel_mixer = GLU(hidden_dim, hidden_dim, bias=use_bias)
         self.channel_mixer.to(device=device, dtype=dtype)
-        if not use_bias:
-            self.channel_mixer.w1.bias = None
-            self.channel_mixer.w2.bias = None
         self.drop = nn.Dropout(p=drop_rate)
         self.prenorm = prenorm
 
