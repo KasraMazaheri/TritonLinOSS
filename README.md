@@ -49,6 +49,29 @@ projection, optional LRU-style input normalization, and multi-head gating or
 output projection. `LinOSSBackbone` stacks this layer in residual GLU blocks
 without adding task-specific encoders, decoders, or training code.
 
+## Benchmark Snapshot
+
+The numbers below were measured on an NVIDIA H200 with `torch==2.12.0+cu126`
+and the default Triton scan tile heuristic. Timings are milliseconds per call
+after warmup. They are intended as a quick sanity check, not a full tuning
+study.
+
+| Workload | Backend | Forward | Forward + backward |
+| --- | ---: | ---: | ---: |
+| Core layer, B=8 L=256 H=64 P=128 heads=1 | Torch native scan | 3.81 | 12.12 |
+| Core layer, B=8 L=256 H=64 P=128 heads=1 | Torch + Triton scan | 0.65 | 2.95 |
+| Core layer, B=8 L=256 H=64 P=128 heads=2 | Torch + Triton scan | 0.68 | 3.10 |
+| Core layer, B=4 L=512 H=128 P=256 heads=4 | Torch + Triton scan | 0.70 | 3.07 |
+| 2-block backbone, B=8 L=256 H=64 P=128 heads=2 | Torch native scan | 8.06 | 25.11 |
+| 2-block backbone, B=8 L=256 H=64 P=128 heads=2 | Torch + Triton scan | 1.87 | 6.67 |
+
+For the comparable single-head core layer, the Triton scan path was about
+5.8x faster than the native Torch scan in forward and about 4.1x faster for
+forward plus backward. A Discretax/JAX GPU reference remains faster for the
+single-head core layer in this snapshot, so the Torch path should be viewed as
+deployable and substantially accelerated, with more kernel-level optimization
+still available.
+
 ## Installation
 
 ### Option 1: With CUDA/Triton support
