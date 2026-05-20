@@ -2,25 +2,27 @@ import pytest
 import torch
 import jax
 import jax.numpy as jnp
-from src.damped_linoss.models.LinOSS import binary_operator
-from src.damped_linoss.models.TorchLinOSS import (
+from damped_linoss.models.LinOSS import binary_operator
+from damped_linoss.models.TorchLinOSS import (
     binary_operator as torch_binary_operator,
 )
-from src.damped_linoss.parallel_scan.torch_associative_scan import (
+from damped_linoss.parallel_scan.torch_associative_scan import (
     associative_scan as torch_associative_scan,
 )
 
 
-def generate_random_torch_tensors(B, L, P, variance=1e-3, requires_grad=False):
+def generate_random_torch_tensors(
+    B, L, P, variance=1e-3, requires_grad=False, device="cpu"
+):
     """Generate random torch tensors for testing parallel scan.
 
     If requires_grad is True, tensors are created with requires_grad and
     .retain_grad() is called so their .grad fields are populated after
     backward().
     """
-    M = torch.randn(B, P * 4, device="cuda", requires_grad=requires_grad) * variance
+    M = torch.randn(B, P * 4, device=device, requires_grad=requires_grad) * variance
     F = (
-        torch.randn(B, L, 2 * P, 2, device="cuda", requires_grad=requires_grad)
+        torch.randn(B, L, 2 * P, 2, device=device, requires_grad=requires_grad)
         * variance
     )
     if requires_grad:
@@ -47,11 +49,15 @@ def test_parallel_scan_fwd_bwd(B, L, P):
     """Test that forward and backward passes produce correct results matching the JAX implementation."""
 
     # Set random seeds for reproducibility
-    torch.cuda.empty_cache()
-    torch.cuda.manual_seed_all(0)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.manual_seed_all(0)
     torch.manual_seed(0)
 
-    M, F = generate_random_torch_tensors(B, L, P, requires_grad=True)
+    M, F = generate_random_torch_tensors(
+        B, L, P, requires_grad=True, device=device
+    )
 
     # Expand M to match the expected input shape for torch_associative_scan
     M_expanded = M.unsqueeze(1).expand(B, L, 4 * P)

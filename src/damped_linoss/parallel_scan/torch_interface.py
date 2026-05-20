@@ -17,7 +17,7 @@ except ImportError:
 
 class ParallelScanFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, M, F, TILE_L=64):
+    def forward(ctx, M, F, TILE_L=None):
         """
         The forward pass is identical to your original wrapper function.
         We save the inputs and outputs for the backward pass.
@@ -34,6 +34,10 @@ class ParallelScanFunction(torch.autograd.Function):
             F = F.unsqueeze(0)
 
         B, L = F.shape[:2]
+        if TILE_L is None:
+            TILE_L = 128 if L <= 128 else 256 if L < 512 else 512
+        elif TILE_L > 512:
+            raise ValueError("TILE_L must be <= 512 for the Triton scan kernels.")
         P = F.shape[2] // 2
         assert M.shape == (B, 4 * P)
         assert F.shape == (B, L, 2 * P, 2)
@@ -129,20 +133,22 @@ class ParallelScanFunction(torch.autograd.Function):
             TILE_L=TILE_L,
         )
 
+        num_blocks_l = triton.cdiv(L, TILE_L)
         BM  = RM[:, 0::TILE_L].clone()
         gBM = gM[:, 0::TILE_L].clone()
         gBF = gF[:, 0::TILE_L].clone()
 
-        # Compute partial sums
-        grid_inter = (B, P)
-        inter_block_scan_bwd[grid_inter](
-            BM, gBM, gBF,
-            BM.shape[1],
-            BM.stride(), gBM.stride(), gBF.stride(),
-        )
+        if num_blocks_l > 1:
+            # Compute partial sums
+            grid_inter = (B, P)
+            inter_block_scan_bwd[grid_inter](
+                BM, gBM, gBF,
+                BM.shape[1],
+                BM.stride(), gBM.stride(), gBF.stride(),
+            )
 
         # Parallel scan epilogue to add partial sums to each block
-        grid_epilogue = (B, P, triton.cdiv(L, TILE_L))
+        grid_epilogue = (B, P, num_blocks_l)
         parallel_scan_epilogue_bwd[grid_epilogue](
             OM, OF,
             BM, gBM, gBF,

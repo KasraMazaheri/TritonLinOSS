@@ -3,8 +3,8 @@ import jax.numpy as jnp
 import torch
 import numpy as np
 
-from src.damped_linoss.models.LinOSS import binary_operator as jax_binary_operator
-from src.damped_linoss.models.TorchLinOSS import (
+from damped_linoss.models.LinOSS import binary_operator as jax_binary_operator
+from damped_linoss.models.TorchLinOSS import (
     binary_operator as torch_binary_operator,
 )
 

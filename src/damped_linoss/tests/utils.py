@@ -5,9 +5,9 @@ import torch
 import equinox as eqx
 import functools as ft
 from typing import Tuple
-from src.damped_linoss.models.LinOSS import LinOSS as LinOSSJax
-from src.damped_linoss.models.TorchLinOSS import LinOSS as LinOSSTorch
-from src.damped_linoss.utils.from_jax import from_jax_to_torch
+from damped_linoss.models.LinOSS import LinOSS as LinOSSJax
+from damped_linoss.models.TorchLinOSS import LinOSS as LinOSSTorch
+from damped_linoss.utils.from_jax import from_jax_to_torch
 
 
 def compute_differences(orig_out, trit_out):

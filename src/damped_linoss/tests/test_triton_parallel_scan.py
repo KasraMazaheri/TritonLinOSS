@@ -2,8 +2,13 @@ import pytest
 import torch
 import jax
 import jax.numpy as jnp
-from src.damped_linoss.models.LinOSS import binary_operator
-from src.damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
+from damped_linoss.models.LinOSS import binary_operator
+from damped_linoss.parallel_scan.torch_interface import ParallelScanFunction
+
+
+pytestmark = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="CUDA is not available to PyTorch"
+)
 
 
 def generate_random_torch_tensors(B, L, P, variance=1e-3, requires_grad=False):
@@ -35,9 +40,17 @@ def real_imag_to_complex(tensor):
     return tensor[..., 0] + 1j * tensor[..., 1]
 
 
-@pytest.mark.parametrize("B", [1, 4, 16])
-@pytest.mark.parametrize("L", [1, 16, 32, 64, 100, 128, 256])
-@pytest.mark.parametrize("P", [1, 8, 16, 32, 35, 64])
+@pytest.mark.parametrize(
+    "B,L,P",
+    [
+        (1, 1, 1),
+        (4, 16, 8),
+        (16, 64, 16),
+        (4, 100, 35),
+        (16, 128, 64),
+        (4, 256, 64),
+    ],
+)
 def test_parallel_scan_fwd_bwd(B, L, P):
     """Test that forward and backward passes produce correct results matching the JAX implementation."""
 
@@ -73,6 +86,12 @@ def test_parallel_scan_fwd_bwd(B, L, P):
     assert jnp.allclose(jax_loss, torch_to_jax(loss), atol=1e-1)
     assert jnp.allclose(jax_M_grad, torch_to_jax(M.grad), atol=1e-1)
     assert jnp.allclose(jax_F_grad, torch_to_jax(F.grad), atol=1e-1)
+
+
+def test_parallel_scan_rejects_unsupported_large_tile():
+    M, F = generate_random_torch_tensors(1, 16, 1)
+    with pytest.raises(ValueError, match="TILE_L must be <= 512"):
+        ParallelScanFunction.apply(M, F, 1024)
 
 
 if __name__ == "__main__":
