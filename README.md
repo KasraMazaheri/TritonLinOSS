@@ -72,6 +72,24 @@ single-head core layer in this snapshot, so the Torch path should be viewed as
 deployable and substantially accelerated, with more kernel-level optimization
 still available.
 
+## Citation
+
+If you use this repository, please cite TritonLinOSS as software:
+
+```bibtex
+@software{mazaheri2026tritonlinoss,
+  author = {Mazaheri, Kasra and Armstrong, Bennedict},
+  title = {TritonLinOSS: PyTorch and Triton kernels for LinOSS sequence models},
+  year = {2026},
+  url = {https://github.com/KasraMazaheri/TritonLinOSS}
+}
+```
+
+This implementation builds on the LinOSS/Damped LinOSS model family and ports
+newer Discretax-style LinOSS variants into a deployable PyTorch/Triton package.
+Please also cite any relevant model papers or upstream projects when their
+ideas, experiments, or code are part of your work.
+
 ## Installation
 
 ### Option 1: With CUDA/Triton support
