@@ -183,26 +183,34 @@ def test_backbone_matches_discretax_style_shape_contract():
     not torch.cuda.is_available() or not TRITON_AVAILABLE,
     reason="Triton parity requires CUDA and Triton",
 )
-def test_unified_layer_triton_matches_native_scan():
+@pytest.mark.parametrize("discretization", ["IM", "IMEX", "IMEX2", "IMEX3", "EX"])
+def test_unified_layer_triton_matches_native_multihead_projection(discretization):
     torch.manual_seed(789)
     native = LinOSSSequenceMixer(
         in_features=8,
-        state_dim=12,
-        num_heads=2,
-        discretization="IMEX3",
+        state_dim=16,
+        num_heads=4,
+        discretization=discretization,
         damping=True,
+        use_head_output_projection=True,
         use_triton=False,
     ).cuda()
     triton = LinOSSSequenceMixer(
         in_features=8,
-        state_dim=12,
-        num_heads=2,
-        discretization="IMEX3",
+        state_dim=16,
+        num_heads=4,
+        discretization=discretization,
         damping=True,
+        use_head_output_projection=True,
         use_triton=True,
     ).cuda()
     triton.load_state_dict(native.state_dict())
-    x = torch.randn(4, 33, 8, device="cuda", requires_grad=True)
+    assert native.head_gate is None
+    assert triton.head_gate is None
+    assert native.head_output_projection is not None
+    assert triton.head_output_projection is not None
+
+    x = torch.randn(3, 33, 8, device="cuda", requires_grad=True)
     x_ref = x.detach().clone().requires_grad_(True)
 
     y_native = native(x_ref)

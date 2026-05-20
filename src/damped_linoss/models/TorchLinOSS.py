@@ -415,6 +415,7 @@ class LinOSSSequenceMixer(_AbstractLinOSSLayer):
     def _apply_recurrence(self, x, steps):
         batch_size, seq_len, _ = x.shape
         x_heads = x.reshape(batch_size, seq_len, self.num_heads, self.head_hidden_dim)
+        # The Triton scan is batch-parallel; each head is an independent scan.
         x_flat = x_heads.permute(0, 2, 1, 3).reshape(batch_size * self.num_heads, seq_len, self.head_hidden_dim)
 
         A, G = self._project_parameters(steps)
